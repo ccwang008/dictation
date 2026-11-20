@@ -11,9 +11,8 @@ async function open(browser, { theme = 'light', width = 1440, height = 900, scal
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: scale });
   const page = await ctx.newPage();
   await page.goto(BASE);
-  await page.evaluate(t => { localStorage.clear(); localStorage.setItem('voa_theme', t); }, theme);
-  await page.reload();
   await page.waitForSelector('text=真人原声篇目');
+  await page.evaluate(t => window.__LH__.setTheme(t), theme);
   return page;
 }
 
@@ -61,9 +60,12 @@ async function shot(page, name) {
   await page.keyboard.press('Escape');
 
   // 4. 听写比对
+  await page.evaluate(() => {
+    const L = window.__LH__.L;
+    L.sentences.filter(s => L.hardSet.has(s.id)).forEach(L.toggleHard);
+    L.toggleHard(L.sentences[2]);
+  });
   await page.click('button:has-text("听写") >> nth=0');
-  await page.waitForSelector('textarea');
-  await page.evaluate(() => window.__LH__.L.startDictation([3]));
   await page.waitForSelector('textarea');
   await page.fill('textarea', 'The 44 year old adventure began his trip alone in October from San Diego California');
   await page.click('button:has-text("提交检查")');

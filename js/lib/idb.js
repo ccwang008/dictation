@@ -18,15 +18,18 @@ function openDB() {
   return dbPromise;
 }
 
-function tx(store, mode, fn) {
+function transaction(stores, mode, fn) {
   return openDB().then(db => new Promise((resolve, reject) => {
-    const t = db.transaction(store, mode);
-    const s = t.objectStore(store);
-    const result = fn(s);
+    const t = db.transaction(stores, mode);
+    const result = fn(t);
     t.oncomplete = () => resolve(result && 'result' in result ? result.result : result);
     t.onerror = () => reject(t.error);
     t.onabort = () => reject(t.error);
   }));
+}
+
+function tx(store, mode, fn) {
+  return transaction(store, mode, t => fn(t.objectStore(store)));
 }
 
 export const materialsDB = {
@@ -36,16 +39,27 @@ export const materialsDB = {
   get(id) {
     return tx('materials', 'readonly', s => s.get(id));
   },
-  async put(meta, audioBlob) {
-    if (audioBlob) await tx('blobs', 'readwrite', s => s.put(audioBlob, meta.id));
-    return tx('materials', 'readwrite', s => s.put(meta));
+  put(meta, audio, subtitle) {
+    return transaction(['materials', 'blobs'], 'readwrite', t => {
+      const blobs = t.objectStore('blobs');
+      blobs.put(audio, meta.id);
+      if (subtitle) blobs.put(subtitle, 'subtitle:' + meta.id);
+      t.objectStore('materials').put(meta);
+    });
   },
   getAudio(id) {
     return tx('blobs', 'readonly', s => s.get(id));
   },
-  async remove(id) {
-    await tx('blobs', 'readwrite', s => s.delete(id));
-    return tx('materials', 'readwrite', s => s.delete(id));
+  getSubtitle(id) {
+    return tx('blobs', 'readonly', s => s.get('subtitle:' + id));
+  },
+  remove(id) {
+    return transaction(['materials', 'blobs'], 'readwrite', t => {
+      const blobs = t.objectStore('blobs');
+      blobs.delete(id);
+      blobs.delete('subtitle:' + id);
+      t.objectStore('materials').delete(id);
+    });
   },
 };
 

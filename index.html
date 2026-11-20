@@ -77,6 +77,11 @@
       --shadow-md:            0 8px 32px -8px rgba(15,23,42,.1);
       --kbd-bg:               #f5f5f4;
       --kbd-border:           #e2e8f0;
+      --hint-bg:              #fffbeb;
+      --hint-text:            #78350f;
+      --hint-border:          #fde68a;
+      --dict-correct-bg:      #d1fae5;
+      --dict-correct-text:    #047857;
     }
     [data-theme="dark"] {
       --bg-1: 59, 130, 246;
@@ -105,6 +110,11 @@
       --shadow-md:            0 8px 32px -8px rgba(0,0,0,.6);
       --kbd-bg:               #334155;
       --kbd-border:           #475569;
+      --hint-bg:              #422f1a;
+      --hint-text:            #fef3c7;
+      --hint-border:          #926722;
+      --dict-correct-bg:      #064e3b;
+      --dict-correct-text:    #a7f3d0;
     }
     [data-theme="sepia"] {
       --bg-1: 251, 191, 153;
@@ -133,6 +143,11 @@
       --shadow-md:            0 8px 32px -8px rgba(120,53,15,.15);
       --kbd-bg:               #fde68a;
       --kbd-border:           #f59e0b;
+      --hint-bg:              #fef3c7;
+      --hint-text:            #78350f;
+      --hint-border:          #d97706;
+      --dict-correct-bg:      #d1fae5;
+      --dict-correct-text:    #065f46;
     }
 
     body {
@@ -144,6 +159,29 @@
       background-attachment: fixed;
       color: var(--text-base);
     }
+
+    /* 提示与批改词块的文字、底色成对切换，避免主题工具类只覆盖一侧。 */
+    .hint-panel {
+      background-color: var(--hint-bg);
+      color: var(--hint-text);
+      border: 1px solid var(--hint-border);
+    }
+    .dict-word-correct {
+      background-color: var(--dict-correct-bg);
+      color: var(--dict-correct-text);
+    }
+    .dictation-row {
+      background-color: var(--surface-solid);
+      border-color: var(--border-base);
+    }
+    .dictation-row--active { border-color: var(--accent); }
+    .dictation-row-button:hover { background-color: var(--surface-hover); }
+    .dictation-row-button[aria-current="step"] { background-color: var(--accent-soft-bg); }
+    .dictation-row-button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+    .dictation-question { overflow-wrap: anywhere; }
 
     /* scrollbar */
     ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -757,29 +795,34 @@
       </button>
     </div>
 
-    <div class="flex items-center gap-1.5 md:gap-2">
+    <div class="flex items-center gap-1 sm:gap-1.5 md:gap-2">
       <div class="hidden md:flex items-center gap-0.5 p-0.5 rounded-full bg-white/70 border border-sand-200">
         <button v-for="t in [{v:'light',icon:'☀'},{v:'sepia',icon:'◐'},{v:'dark',icon:'☾'}]" :key="t.v" @click="setTheme(t.v)"
                 class="w-7 h-7 rounded-full text-xs transition-all flex items-center justify-center"
                 :class="theme === t.v ? 'bg-gradient-to-br from-brand-500 to-indigo-500 text-white shadow-md' : 'text-sand-500 hover:bg-sand-100'">{{ t.icon }}</button>
       </div>
       <button @click="L.showZh = !L.showZh"
-              class="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium transition-all border"
+              class="flex items-center gap-1.5 px-2 py-2 sm:px-3 rounded-full text-xs font-medium transition-all border"
               :class="L.showZh ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white/70 border-sand-200 text-sand-500'" title="快捷键 Z">
         <span class="w-1.5 h-1.5 rounded-full" :class="L.showZh ? 'bg-emerald-500' : 'bg-sand-400'"></span>
         <span class="hidden sm:inline">{{ L.showZh ? '显示中文' : '隐藏中文' }}</span><span class="sm:hidden">中</span>
       </button>
+      <button @click="openFavorites" aria-label="历史收藏" aria-haspopup="dialog" aria-controls="dictation-favorites-dialog" title="历史收藏"
+              class="flex items-center gap-1.5 px-2 py-2 sm:px-3 rounded-full text-xs font-semibold bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100">
+        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linejoin="round" d="m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.2L12 17.4l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9L12 3z"/></svg>
+        <span class="hidden sm:inline">历史收藏</span>
+      </button>
       <button @click="vocabOpen = true"
-              class="relative flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold bg-gradient-to-br from-brand-50 to-indigo-50 border border-brand-200 text-brand-700">
+              class="relative flex items-center gap-1.5 px-2 py-2 sm:px-3 rounded-full text-xs font-semibold bg-gradient-to-br from-brand-50 to-indigo-50 border border-brand-200 text-brand-700">
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg>
         <span class="hidden sm:inline">生词本</span>
         <span v-if="vocabCount > 0" class="badge-pulse bg-gradient-to-br from-pink-500 to-rose-500 text-white text-[10px] font-bold min-w-[20px] h-5 px-1.5 rounded-full inline-flex items-center justify-center">{{ vocabCount }}</span>
       </button>
-      <button @click="enterVocab" class="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold bg-gradient-to-br from-pink-500 to-rose-500 text-white shadow-md shadow-rose-500/20">
+      <button @click="enterVocab" class="flex items-center gap-1.5 px-2 py-2 sm:px-3 rounded-full text-xs font-semibold bg-gradient-to-br from-pink-500 to-rose-500 text-white shadow-md shadow-rose-500/20">
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
         <span class="hidden md:inline">背单词</span>
       </button>
-      <button @click="statsModalOpen = true" class="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold bg-gradient-to-br from-violet-500 to-purple-600 text-white shadow-md shadow-purple-500/20">
+      <button @click="statsModalOpen = true" class="flex items-center gap-1.5 px-2 py-2 sm:px-3 rounded-full text-xs font-semibold bg-gradient-to-br from-violet-500 to-purple-600 text-white shadow-md shadow-purple-500/20">
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
         <span class="hidden md:inline">学习统计</span>
       </button>
@@ -803,7 +846,7 @@
 
         <div class="relative">
           <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-sand-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-          <input v-model="L.search" type="text" placeholder="搜索标题 / 中文标题…"
+          <input v-model="L.search" type="text" :placeholder="L.tab === 'mine' ? '搜索教材 / 标题…' : '搜索标题 / 中文标题…'"
                  class="w-full pl-9 pr-3 py-2 rounded-xl bg-white border border-sand-200 text-sm text-sand-800 placeholder-sand-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none" />
         </div>
 
@@ -820,41 +863,54 @@
                     :class="L.level === lv ? 'bg-sand-800 text-white' : 'text-sand-500 hover:bg-sand-100'">{{ lv === 'all' ? '全部' : lv }}</button>
           </div>
         </template>
-        <button v-if="L.tab === 'mine'" @click="L.openImporter()" class="w-full btn-gradient py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5">
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-          导入音频 + 字幕
-        </button>
+        <div v-if="L.tab === 'mine'" class="grid grid-cols-2 gap-2">
+          <button @click="L.openImporter()" class="btn-gradient py-2 rounded-xl text-xs font-semibold">导入音频 + 字幕</button>
+          <button @click="L.openImporter('folder')" class="py-2 rounded-xl border border-sand-200 bg-white text-sand-700 text-xs font-semibold hover:bg-sand-50">导入文件夹</button>
+        </div>
       </div>
 
       <div class="flex-1 overflow-y-auto px-3 py-3 space-y-2">
         <p v-if="L.catalogError" class="text-xs text-rose-500 px-2">{{ L.catalogError }}</p>
+        <p v-if="L.tab === 'mine' && L.materialsError" class="text-xs text-rose-500 px-2">{{ L.materialsError }}</p>
 
         <div v-if="L.tab === 'review'" class="px-1 pb-1 text-[11px] font-bold uppercase tracking-wider text-sand-500">到期复习 · {{ L.filtered.length }}</div>
         <div v-if="L.filtered.length === 0" class="text-center py-8 text-sand-400 text-xs leading-relaxed px-4">
           <template v-if="L.tab === 'review'">暂时没有到期的复习。<br/>完成一篇的五步首学后，会按 6 小时 → 1 天 → 2 天 → 4 天 → 7 天 → 14 天 → 28 天自动安排复习。</template>
-          <template v-else-if="L.tab === 'mine'">还没有导入素材。<br/>支持 MP3 / M4A / WAV 等音频，搭配 LRC / SRT / VTT 字幕，文件只保存在本机浏览器。</template>
+          <template v-else-if="L.tab === 'mine' && !L.search.trim()">还没有导入素材。<br/>支持 MP3 / M4A / WAV 等音频，搭配 LRC / SRT / VTT 字幕。</template>
           <template v-else>没有匹配的素材</template>
         </div>
 
-        <div v-for="ep in L.filtered" :key="ep.id" @click="L.openEpisode(ep)"
-             class="group cursor-pointer rounded-xl p-3 border border-sand-200/60 bg-white/60 hover:bg-white hover:border-sand-300 hover:shadow-md transition-all"
-             :class="{ 'ep-active': L.current?.id === ep.id }">
-          <div class="flex items-center gap-1.5 mb-1 flex-wrap">
-            <span class="text-[9px] px-1.5 py-0.5 rounded font-bold bg-brand-50 text-brand-700">{{ ep.program }}</span>
-            <span v-if="ep.level" class="text-[9px] px-1.5 py-0.5 rounded font-bold bg-sand-100 text-sand-600">{{ ep.level }}</span>
-            <span class="ml-auto text-[9px] px-1.5 py-0.5 rounded font-bold"
-                  :class="{ new: 'text-sand-400', learning: 'bg-amber-50 text-amber-700', due: 'bg-rose-50 text-rose-600', scheduled: 'bg-emerald-50 text-emerald-700', mastered: 'bg-violet-50 text-violet-700' }[L.statusOf(ep.id).kind]">{{ L.statusOf(ep.id).label }}</span>
-          </div>
-          <h3 class="text-[13px] font-semibold leading-snug text-sand-900 line-clamp-2">{{ ep.title }}</h3>
-          <p v-if="ep.titleZh" class="text-[11px] text-sand-500 leading-snug truncate mt-0.5">{{ ep.titleZh }}</p>
-          <div class="flex items-center gap-2.5 mt-1.5 text-[10px] text-sand-400">
-            <span>⏱ {{ formatTime(ep.duration) }}</span>
-            <span>{{ ep.sentenceCount }} 句</span>
-            <span v-if="ep.wpm">{{ ep.wpm }} wpm</span>
-            <span v-if="ep.date" class="ml-auto">{{ ep.date }}</span>
-            <button v-if="ep.kind === 'local'" @click.stop="L.removeMaterial(ep)" class="ml-auto opacity-0 group-hover:opacity-100 text-rose-500 hover:text-rose-600">删除</button>
-          </div>
-        </div>
+        <template v-for="section in L.materialSections" :key="section.key">
+          <button v-if="section.title" @click="L.toggleTextbook(section.key)"
+                  :aria-expanded="section.expanded" :aria-disabled="L.search.trim() ? true : undefined"
+                  class="flex w-full items-center gap-2 rounded-xl border border-sand-200 bg-white/60 px-3 py-2.5 text-left hover:bg-white">
+            <span aria-hidden="true" class="text-sand-500 transition-transform" :class="{ 'rotate-90': section.expanded }">▸</span>
+            <span class="min-w-0 flex-1 break-words text-[13px] font-semibold text-sand-900">{{ section.title }}</span>
+            <span class="shrink-0 text-[11px] text-sand-500">{{ section.episodes.length }} 篇</span>
+          </button>
+          <template v-if="!section.title || section.expanded">
+            <div v-for="ep in section.episodes" :key="ep.id" @click="L.openEpisode(ep)"
+                 class="group cursor-pointer rounded-xl p-3 border border-sand-200/60 bg-white/60 hover:bg-white hover:border-sand-300 hover:shadow-md transition-all"
+                 :class="{ 'ep-active': L.current?.id === ep.id, 'ml-4': section.title }">
+              <div class="flex items-center gap-1.5 mb-1 flex-wrap">
+                <span v-if="!section.title" class="text-[9px] px-1.5 py-0.5 rounded font-bold bg-brand-50 text-brand-700">{{ ep.program }}</span>
+                <span v-if="ep.level" class="text-[9px] px-1.5 py-0.5 rounded font-bold bg-sand-100 text-sand-600">{{ ep.level }}</span>
+                <span class="ml-auto text-[9px] px-1.5 py-0.5 rounded font-bold"
+                      :class="{ new: 'text-sand-400', learning: 'bg-amber-50 text-amber-700', due: 'bg-rose-50 text-rose-600', scheduled: 'bg-emerald-50 text-emerald-700', mastered: 'bg-violet-50 text-violet-700' }[L.statusOf(ep.id).kind]">{{ L.statusOf(ep.id).label }}</span>
+              </div>
+              <h3 class="text-[13px] font-semibold leading-snug text-sand-900 line-clamp-2">{{ ep.title }}</h3>
+              <button v-if="ep.kind === 'local'" @click.stop="L.openValidation(ep)" class="mt-1 text-[11px] font-semibold underline" :class="ep.validation?.status === 'passed' ? 'text-emerald-600' : 'text-amber-700'">{{ L.validationLabel(ep.validation?.status) }}</button>
+              <p v-if="ep.titleZh" class="text-[11px] text-sand-500 leading-snug truncate mt-0.5">{{ ep.titleZh }}</p>
+              <div class="flex items-center gap-2.5 mt-1.5 text-[10px] text-sand-400">
+                <span>⏱ {{ formatTime(ep.duration) }}</span>
+                <span>{{ ep.sentenceCount }} 句</span>
+                <span v-if="ep.wpm">{{ ep.wpm }} wpm</span>
+                <span v-if="ep.date" class="ml-auto">{{ ep.date }}</span>
+                <button v-if="ep.kind === 'local'" @click.stop="L.removeMaterial(ep)" class="ml-auto opacity-0 group-hover:opacity-100 text-rose-500 hover:text-rose-600">删除</button>
+              </div>
+            </div>
+          </template>
+        </template>
 
         <template v-if="L.tab === 'review'">
           <div class="px-1 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-sand-500">难句本 · {{ L.hardItems.length }}</div>
@@ -942,8 +998,12 @@
           </p>
 
           <!-- 播放进度 -->
+          <div v-if="L.current.kind === 'local'" class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <button @click="L.openValidation(L.current)" class="underline font-semibold" :class="L.validationReady ? 'text-emerald-600' : 'text-amber-700'">{{ L.validationLabel(L.current.validation?.status) }}</button>
+            <span v-if="!L.validationReady" class="text-sand-500">自动修正完成后可开始听写。</span>
+          </div>
           <div class="mt-3">
-            <div @click="L.seekRatio" class="group h-2 bg-sand-200 rounded-full cursor-pointer relative hover:h-2.5 transition-all">
+            <div @click="L.seekRatio" :title="L.dictation.active ? '跳到对应听写题并播放本句' : '跳转播放位置'" class="group h-2 bg-sand-200 rounded-full cursor-pointer relative hover:h-2.5 transition-all">
               <div class="absolute inset-y-0 left-0 progress-fill rounded-full" :style="{ width: L.duration ? (L.time / L.duration * 100) + '%' : '0%' }"></div>
               <span v-for="s in L.sentences.filter(x => L.hardSet.has(x.id))" :key="'h' + s.id"
                     class="absolute top-1/2 -translate-y-1/2 w-1 h-3 rounded bg-amber-400 pointer-events-none" :style="{ left: (s.t0 / (L.duration || 1) * 100) + '%' }"></span>
@@ -956,7 +1016,7 @@
 
           <!-- 控制条 -->
           <div class="flex items-center gap-1.5 flex-wrap mt-1">
-            <button @click="L.step(-1)" class="w-9 h-9 rounded-xl bg-white border border-sand-200 text-sand-600 hover:bg-sand-50 flex items-center justify-center" title="上一句 ←">
+            <button @click="L.step(-1)" :disabled="L.dictation.active && L.dictation.pos === 0" class="w-9 h-9 rounded-xl bg-white border border-sand-200 text-sand-600 hover:bg-sand-50 flex items-center justify-center disabled:opacity-40" :title="L.dictation.active ? '上一题' : '上一句 ←'">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
             </button>
             <button @click="L.togglePlay()" class="btn-gradient px-5 h-10 rounded-xl font-semibold text-sm flex items-center gap-2" title="播放 / 暂停 Space">
@@ -964,7 +1024,7 @@
               <svg v-else class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
               {{ L.playing ? '暂停' : (L.activeSentence ? '继续' : '播放') }}
             </button>
-            <button @click="L.step(1)" class="w-9 h-9 rounded-xl bg-white border border-sand-200 text-sand-600 hover:bg-sand-50 flex items-center justify-center" title="下一句 →">
+            <button @click="L.step(1)" :disabled="L.dictation.active && L.dictation.pos === L.dictation.queue.length - 1" class="w-9 h-9 rounded-xl bg-white border border-sand-200 text-sand-600 hover:bg-sand-50 flex items-center justify-center disabled:opacity-40" :title="L.dictation.active ? '下一题' : '下一句 →'">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
             </button>
             <button @click="L.replay()" :disabled="!L.activeSentence" class="h-9 px-3 rounded-xl bg-white border border-sand-200 text-xs font-medium text-sand-600 hover:bg-sand-50 disabled:opacity-40" title="重听本句 R">↺ 重听</button>
@@ -972,7 +1032,7 @@
                     :class="L.loop ? 'bg-purple-50 border-purple-300 text-purple-700' : 'bg-white border-sand-200 text-sand-600 hover:bg-sand-50'">🔁 {{ L.loop ? '循环中' : '单句循环' }}</button>
             <button @click="L.pauseEach = !L.pauseEach" class="h-9 px-3 rounded-xl border text-xs font-medium transition-all" title="连续播放时每句后自动暂停"
                     :class="L.pauseEach ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-white border-sand-200 text-sand-600 hover:bg-sand-50'">⏸ 逐句暂停</button>
-            <button @click="L.playAll()" class="h-9 px-3 rounded-xl bg-white border border-sand-200 text-xs font-medium text-sand-600 hover:bg-sand-50">▶ 从头整篇</button>
+            <button @click="L.playAll()" class="h-9 px-3 rounded-xl bg-white border border-sand-200 text-xs font-medium text-sand-600 hover:bg-sand-50">▶ {{ L.dictation.active ? '从头听写' : '从头整篇' }}</button>
             <div class="flex items-center gap-0.5 ml-auto p-0.5 rounded-xl bg-white border border-sand-200 text-[11px]">
               <span class="px-1.5 text-sand-400">语速</span>
               <button v-for="r in [0.6, 0.75, 0.9, 1, 1.2]" :key="r" @click="L.setRate(r)" class="px-1.5 py-1 rounded-lg font-mono font-semibold transition-all"
@@ -1004,49 +1064,84 @@
             </div>
 
             <!-- 听写 -->
-            <div v-else-if="L.stageKey === 'dictation'" class="glass-strong rounded-3xl p-5 md:p-6">
-              <div v-if="!L.dictation.active" class="text-center py-6">
-                <div class="text-4xl mb-2">✍️</div>
-                <p class="text-sm text-sand-600 mb-4">听写会逐句播放原声，默写后逐词比对；低于 80 分的句子自动收进难句本。</p>
-                <div class="flex justify-center gap-2 flex-wrap">
-                  <button @click="L.startDictation()" class="btn-gradient px-5 py-2.5 rounded-xl text-sm font-semibold">
-                    {{ (L.train?.hard?.length) ? `听写难句（${L.train.hard.length} 句）` : '听写精选句' }}
-                  </button>
-                  <button @click="L.startDictation(L.sentences.map(s => s.id))" class="px-5 py-2.5 rounded-xl bg-white border border-sand-200 text-sm text-sand-600 hover:bg-sand-50">全文听写（{{ L.sentences.length }} 句）</button>
+            <div v-else-if="L.stageKey === 'dictation'" class="glass-strong rounded-3xl p-3 sm:p-5 md:p-6">
+              <div class="flex items-center justify-between gap-2 flex-wrap mb-3">
+                <div role="group" aria-label="听写范围" class="inline-flex gap-1 p-1 rounded-xl bg-sand-100">
+                  <button v-for="choice in [{ key: 'all', label: '全部' }, { key: 'hard', label: '难句' }]" :key="choice.key"
+                          @click="L.startDictation(choice.key)" :aria-pressed="L.dictationMode === choice.key"
+                          class="px-4 py-1.5 rounded-lg text-sm font-semibold"
+                          :class="L.dictationMode === choice.key ? 'btn-gradient text-white' : 'text-sand-600 hover:bg-sand-200'">{{ choice.label }}</button>
                 </div>
+                <span v-if="L.dictation.active" class="mr-auto text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md">第 {{ L.dictation.pos + 1 }} / {{ L.dictation.queue.length }} 题</span>
+                <button v-if="L.dictation.active" @click="L.closeDictation()" class="text-xs text-sand-400 hover:text-sand-600">结束听写</button>
               </div>
-              <template v-else>
-                <div class="flex items-center justify-between mb-3">
-                  <span class="text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md">第 {{ L.dictation.pos + 1 }} / {{ L.dictation.queue.length }} 句</span>
-                  <button @click="L.closeDictation()" class="text-xs text-sand-400 hover:text-sand-600">结束听写</button>
-                </div>
-                <div class="flex gap-2 mb-3 flex-wrap">
-                  <button @click="L.dictPlay()" class="flex-1 min-w-[120px] h-11 rounded-xl bg-white border border-sand-200 text-sm font-semibold text-sand-700 hover:bg-sand-50">🔊 播放（Tab）</button>
-                  <button @click="L.dictPlay(0.7)" class="flex-1 min-w-[120px] h-11 rounded-xl bg-white border border-sand-200 text-sm font-semibold text-sand-700 hover:bg-sand-50">🐢 0.7× 慢放</button>
-                </div>
-                <textarea v-model="L.dictation.input" rows="3" placeholder="听到什么就写什么，Enter 提交，Shift+Enter 换行"
-                          class="w-full px-4 py-3 rounded-xl bg-white border border-sand-200 text-[15px] text-sand-800 placeholder-sand-400 focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none" :disabled="!!L.dictation.result"></textarea>
-                <div v-if="L.dictation.result" class="mt-3 animate-slide-up">
-                  <div class="flex items-baseline gap-2 mb-2">
-                    <span class="text-3xl font-display font-extrabold" :class="L.dictation.result.score >= 80 ? 'text-emerald-600' : L.dictation.result.score >= 60 ? 'text-amber-600' : 'text-rose-600'">{{ L.dictation.result.score }}</span>
-                    <span class="text-xs text-sand-500">{{ L.dictation.result.correct }} / {{ L.dictation.result.total }} 词正确</span>
+              <div v-if="!L.dictation.active" class="text-center py-6">
+                <p v-if="L.dictationMode === 'hard' && !L.dictHardIds.length" class="text-sm text-sand-600">这篇还没有难句。可以在精听中标记难句，或切回「全部」。</p>
+                <button v-else @click="L.startDictation()" class="btn-gradient px-5 py-2.5 rounded-xl text-sm font-semibold">
+                  开始听写（{{ L.dictationMode === 'hard' ? L.dictHardIds.length : L.dictationSentences.length }} 句）
+                </button>
+              </div>
+              <p v-if="L.current.dictationExcluded?.length" class="text-xs text-amber-700 mt-2 mb-3">{{ L.current.dictationExcluded.length }} 句无法可靠自动修复，已暂时跳过；其余句子已修正，可直接听写。</p>
+              <ol v-if="L.dictation.active" role="list" aria-label="听写句子" class="space-y-2">
+                <li v-for="(id, pos) in L.dictation.queue" :key="id"
+                    class="dictation-row rounded-2xl overflow-hidden border"
+                    :class="{ 'dictation-row--active': L.dictation.pos === pos }">
+                  <button type="button" class="dictation-row-button w-full flex items-center justify-between gap-3 px-3 sm:px-4 py-2.5 text-left"
+                          :aria-current="L.dictation.pos === pos ? 'step' : undefined" :aria-expanded="L.dictation.pos === pos"
+                          @click="L.selectDictQuestion(pos)">
+                    <span class="text-sm font-semibold text-sand-900">第 {{ pos + 1 }} 题</span>
+                    <span class="text-xs text-sand-600">{{ L.dictRowStatus(id) }}</span>
+                  </button>
+                  <div v-if="L.dictation.pos === pos" class="dictation-question p-3 sm:p-4">
+                    <div class="flex gap-2 mb-3 flex-wrap">
+                      <button @click="L.dictPlay()" class="flex-1 min-w-[120px] h-11 rounded-xl bg-white border border-sand-200 text-sm font-semibold text-sand-700 hover:bg-sand-50">🔊 播放（Tab）</button>
+                      <button @click="L.dictPlay(0.7)" class="flex-1 min-w-[120px] h-11 rounded-xl bg-white border border-sand-200 text-sm font-semibold text-sand-700 hover:bg-sand-50">🐢 0.7× 慢放</button>
+                      <button v-if="!L.dictResult" @click="L.toggleDictHint()" :aria-pressed="L.dictHint" aria-keyshortcuts="Shift" class="flex-1 min-w-[120px] h-11 rounded-xl bg-white border border-sand-200 text-sm font-semibold text-sand-700 hover:bg-sand-50">{{ L.dictHint ? '收起原文（Shift）' : '原文提示（Shift）' }}</button>
+                    </div>
+                    <p v-if="L.dictHint && !L.dictResult" role="status" lang="en" class="hint-panel mb-3 px-4 py-3 rounded-xl text-sm">{{ L.dictSentence.en }}</p>
+                    <textarea id="dictation-input" v-model="L.dictInput" rows="3" aria-label="听写答案" placeholder="Enter 提交并查看答案，再按 Enter 继续。Shift+Enter 换行。"
+                              class="w-full scroll-my-3 px-4 py-3 rounded-xl bg-white border border-sand-200 text-xl leading-relaxed text-sand-800 placeholder-sand-400 focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none" :readonly="!!L.dictResult && !L.dictHasErrors"></textarea>
+                    <div v-if="L.dictResult" class="mt-3 animate-slide-up">
+                      <div class="flex items-baseline gap-2 mb-2">
+                        <span class="text-3xl font-display font-extrabold" :class="L.dictResult.score >= 80 ? 'text-emerald-600' : L.dictResult.score >= 60 ? 'text-amber-600' : 'text-rose-600'">{{ L.dictResult.score }}</span>
+                        <span class="text-xs text-sand-500">{{ L.dictResult.correct }} / {{ L.dictResult.total }} 词正确</span>
+                        <span v-if="L.dictAnswer.draft != null" class="text-xs text-sand-500">上次批改</span>
+                      </div>
+                      <div class="p-3 rounded-xl bg-sand-50 text-sm leading-loose">
+                        <span v-for="(w, i) in L.dictResult.diff" :key="i" class="inline-block max-w-full px-1 rounded mr-1"
+                              :class="w.ok ? 'dict-word-correct' : w.missing ? 'bg-rose-100 text-rose-700 font-semibold' : 'bg-sand-200 text-sand-700 line-through'">{{ w.word }}</span>
+                      </div>
+                      <p class="text-[11px] text-sand-400 mt-1">绿色=写对 · 红色=漏听/写错的原词 · 灰色删除线=多写的词</p>
+                      <div role="region" aria-label="听写答案与翻译" class="mt-3">
+                        <p lang="en" class="text-lg leading-relaxed text-sand-900 font-medium">{{ L.dictSentence?.en }}</p>
+                        <p v-if="L.dictTranslation" lang="zh-CN" class="text-base leading-relaxed text-sand-600 mt-1">{{ L.dictTranslation }}</p>
+                        <p v-else-if="L.dictTranslationState === 'error'" class="text-sm text-sand-500 mt-1">翻译暂时不可用，<button @click="L.translateDictSentence()" class="text-brand-600 underline">重试翻译</button></p>
+                        <p v-else role="status" class="text-sm text-sand-500 mt-1">正在翻译…</p>
+                      </div>
+                      <p class="text-xs text-sand-500 mt-2">查看答案后，按 Enter 或点击「下一句」继续。</p>
+                    </div>
+                    <div class="flex flex-wrap items-center justify-between gap-2 mt-4">
+                      <div role="group" aria-label="听写题目" class="flex gap-2">
+                        <button @click="L.dictMove(-1)" :disabled="L.dictation.pos === 0" class="px-4 py-2 rounded-xl bg-white border border-sand-200 text-sm text-sand-700 disabled:opacity-40">← 上一句</button>
+                        <button @click="L.dictMove(1)" :disabled="L.dictation.pos === L.dictation.queue.length - 1" class="px-4 py-2 rounded-xl bg-white border border-sand-200 text-sm text-sand-700 disabled:opacity-40">下一句 →</button>
+                      </div>
+                      <div class="flex flex-wrap gap-2 ml-auto">
+                        <button v-if="!L.dictResult || L.dictHasErrors" @click="L.dictSubmit()" :disabled="!L.dictCanSubmit" class="btn-gradient px-5 py-2 rounded-xl text-sm font-semibold disabled:opacity-40">{{ L.dictResult ? '重新提交' : '提交检查' }}</button>
+                        <button v-else @click="L.dictRewrite()" class="px-4 py-2 rounded-xl bg-white border border-sand-200 text-sm text-sand-700">重写</button>
+                        <button v-if="L.dictSentence" @click="L.toggleDictFavorite()" :disabled="!L.useSqlite || L.favorites.loading || L.dictFavoritePending"
+                                aria-label="收藏当前句" :aria-pressed="L.dictFavoriteSaved" :aria-busy="L.dictFavoritePending"
+                                :title="L.useSqlite ? (L.dictFavoriteSaved ? '取消收藏' : '收藏当前句') : L.favoritesUnavailable"
+                                class="inline-flex min-h-9 w-10 items-center justify-center rounded-xl border disabled:opacity-50"
+                                :class="L.dictFavoriteSaved ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100' : 'bg-white border-sand-200 text-sand-700 hover:bg-sand-50'">
+                          <svg aria-hidden="true" class="h-5 w-5" :fill="L.dictFavoriteSaved ? 'currentColor' : 'none'" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linejoin="round" d="m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.2L12 17.4l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9L12 3z"/></svg>
+                        </button>
+                        <button v-if="L.dictResult && L.dictation.pos === L.dictation.queue.length - 1 && !L.dictation.finished" @click="L.dictNext()" class="px-4 py-2 rounded-xl text-sm font-semibold" :class="L.dictCanSubmit ? 'bg-white border border-sand-200 text-sand-700' : 'btn-gradient'">完成</button>
+                      </div>
+                    </div>
+                    <p v-if="L.dictFavoriteError" role="alert" class="mt-2 text-right text-xs text-rose-600">{{ L.dictFavoriteError }}</p>
                   </div>
-                  <div class="p-3 rounded-xl bg-sand-50 text-sm leading-loose">
-                    <span v-for="(w, i) in L.dictation.result.diff" :key="i" class="inline-block px-1 rounded mr-1"
-                          :class="w.ok ? 'bg-emerald-100 text-emerald-700' : w.missing ? 'bg-rose-100 text-rose-700 font-semibold' : 'bg-sand-200 text-sand-500 line-through'">{{ w.word }}</span>
-                  </div>
-                  <p class="text-[11px] text-sand-400 mt-1">绿色=写对 · 红色=漏听/写错的原词 · 灰色删除线=多写的词</p>
-                  <p class="text-[15px] text-sand-900 font-medium mt-3">{{ L.dictSentence?.en }}</p>
-                  <p v-if="L.showZh && L.dictSentence?.zh" class="text-xs text-sand-500 mt-1">{{ L.dictSentence.zh }}</p>
-                </div>
-                <div class="flex justify-end gap-2 mt-4">
-                  <button v-if="!L.dictation.result" @click="L.dictSubmit()" :disabled="!L.dictation.input.trim()" class="btn-gradient px-5 py-2 rounded-xl text-sm font-semibold disabled:opacity-40">提交检查</button>
-                  <template v-else>
-                    <button @click="L.dictation.result = null; L.dictation.input = ''; L.dictPlay()" class="px-4 py-2 rounded-xl bg-white border border-sand-200 text-sm text-sand-700">重写</button>
-                    <button @click="L.dictNext()" class="btn-gradient px-5 py-2 rounded-xl text-sm font-semibold">{{ L.dictation.pos < L.dictation.queue.length - 1 ? '下一句 →' : '完成' }}</button>
-                  </template>
-                </div>
-              </template>
+                </li>
+              </ol>
             </div>
 
             <!-- 复述 -->
@@ -1131,7 +1226,7 @@
         </div>
         <div v-else-if="popup.error && !popup.data" class="py-4 text-center">
           <p class="text-sm text-sand-700 mb-1">词典中未找到 <strong>{{ popup.word }}</strong></p>
-          <p v-if="popup.translation" class="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-sm text-sand-800">{{ popup.translation }}</p>
+          <p v-if="popup.translation" class="hint-panel mt-3 p-3 rounded-xl text-sm">{{ popup.translation }}</p>
           <div class="flex justify-center gap-2 mt-5">
             <button @click="closePopup" class="px-5 py-2 rounded-xl bg-sand-100 border border-sand-200 text-sm text-sand-700">关闭</button>
             <button v-if="popup.translation && !isWordSaved(popup.word)" @click="addToVocab" class="btn-gradient px-4 py-2 rounded-xl text-sm font-semibold">加入生词本</button>
@@ -1395,6 +1490,42 @@
   </div>
   </template><!-- end view === 'vocab' -->
 
+  <dialog ref="favoritesDialog" id="dictation-favorites-dialog" aria-labelledby="dictation-favorites-title"
+          class="glass-strong m-auto w-[92vw] max-w-2xl overflow-hidden rounded-3xl p-0 shadow-2xl backdrop:bg-sand-900/40 backdrop:backdrop-blur-sm">
+    <div class="flex max-h-[80dvh] flex-col">
+      <div class="flex shrink-0 items-center justify-between gap-4 border-b border-sand-200 px-5 py-4 md:px-6">
+        <h2 id="dictation-favorites-title" class="text-xl font-bold text-sand-900">历史收藏</h2>
+        <form method="dialog">
+          <button autofocus class="rounded-xl border border-sand-200 bg-white px-3 py-2 text-sm text-sand-700 hover:bg-sand-50">关闭</button>
+        </form>
+      </div>
+      <div class="overflow-y-auto px-5 py-4 md:px-6" :aria-busy="L.favorites.loading">
+        <p v-if="!L.useSqlite" class="py-4 text-sm text-sand-600">{{ L.favoritesUnavailable }}</p>
+        <p v-else-if="L.favorites.loading" role="status" class="py-4 text-sm text-sand-600">正在加载收藏…</p>
+        <template v-else>
+          <div v-if="L.favorites.loadError" class="mb-3 flex flex-wrap items-center gap-2 text-sm text-rose-600">
+            <p role="alert">读取收藏失败。{{ L.favorites.loadError }}</p>
+            <button @click="L.loadFavorites()" class="rounded-lg border border-sand-200 bg-white px-3 py-1.5 text-sand-700">重试</button>
+          </div>
+          <p v-if="L.favorites.removeError" role="alert" class="mb-3 text-sm text-rose-600">移除失败。{{ L.favorites.removeError }}</p>
+          <ul v-if="L.favorites.items.length" class="space-y-2">
+            <li v-for="item in L.favorites.items" :key="`${item.episodeId}/${item.sentenceId}`" class="rounded-2xl border border-sand-200 bg-white p-4">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <h3 class="break-words text-sm font-bold text-sand-900">{{ item.title }}</h3>
+                  <p class="mt-1 text-xs text-sand-500">收藏于 <time :datetime="new Date(item.savedAt).toISOString()">{{ L.formatFavoriteDate(item.savedAt) }}</time></p>
+                </div>
+                <button @click="L.removeFavorite(item)" :disabled="L.favoritePending(item)" class="shrink-0 rounded-lg border border-sand-200 px-2.5 py-1 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50">{{ L.favoritePending(item) ? '移除中…' : '移除' }}</button>
+              </div>
+              <p lang="en" class="mt-2 break-words text-sm leading-relaxed text-sand-800">{{ item.sentence }}</p>
+            </li>
+          </ul>
+          <p v-else-if="!L.favorites.loadError" class="py-4 text-sm text-sand-600">还没有收藏的句子。</p>
+        </template>
+      </div>
+    </div>
+  </dialog>
+
   <!-- ╔══════════ SHADOWING 跟读（真人原声）══════════╗ -->
   <transition name="popup">
     <div v-if="L.shadow.active" @click.self="L.closeShadow()" class="fixed inset-0 bg-sand-900/40 backdrop-blur-md flex items-center justify-center z-50 p-4">
@@ -1429,29 +1560,121 @@
     </div>
   </transition>
 
+  <!-- 导入后的音文校验与逐句复核 -->
+  <transition name="popup">
+    <div v-if="L.validation.open" @click.self="L.closeValidation()" class="fixed inset-0 z-50 flex items-center justify-center bg-sand-900/40 backdrop-blur-md p-3 md:p-5">
+      <section role="dialog" aria-modal="true" aria-labelledby="audio-validation-title" class="glass-strong w-full max-w-3xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+        <header class="flex items-start justify-between gap-3 px-5 py-4 border-b border-sand-200">
+          <div><h3 id="audio-validation-title" class="text-xl font-bold text-sand-900">声音与字幕自动修正</h3><p class="text-sm text-sand-500 mt-1">{{ L.validation.title }}</p></div>
+          <button id="validation-close" @click="L.closeValidation()" class="px-3 py-2 rounded-xl bg-white border border-sand-200 text-sm text-sand-700">关闭</button>
+        </header>
+        <div class="p-5 space-y-4 overflow-y-auto">
+          <p v-if="L.validation.error" role="alert" class="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{{ L.validation.error }}</p>
+          <p v-if="!L.validation.check && !L.validation.error" role="status" class="text-sm text-sand-600">正在读取校验结果…</p>
+          <template v-if="L.validation.check">
+            <div role="status" class="hint-panel rounded-xl p-4">
+              <p class="font-semibold">{{ L.validationLabel(L.validation.check.status) }}</p>
+              <p class="mt-1 text-sm">{{ L.validation.check.message }}</p>
+              <progress v-if="['queued','running'].includes(L.validation.check.status)" aria-label="音文校验进度" :value="L.validation.check.progress" max="100" class="w-full h-2 mt-3"></progress>
+            </div>
+            <p class="text-sm leading-relaxed text-sand-600">导入后自动比对语音与原文，修正播放时间轴和切句起止时间，完成后即可听写。原始文件保留。</p>
+            <p v-if="L.validation.check.report" class="text-sm text-sand-600">共 {{ L.validation.check.total }} 句 · 已自动修正 {{ L.validation.check.corrected }} 句 · 可听写 {{ L.validation.check.ready }} 句 · 暂时跳过 {{ L.validation.check.excluded || 0 }} 句</p>
+            <details v-if="L.validation.check.status === 'review' || L.validation.check.excluded" class="space-y-3">
+              <summary class="cursor-pointer text-sm font-semibold text-sand-700">查看未能自动修复的句子（可选）</summary>
+              <p class="text-sm text-sand-600">以下句子无法可靠自动修复，已暂时跳过，不影响其他句子的听写。你也可以重新自动修正，或在这里手动调整。</p>
+              <div class="rounded-xl border border-sand-200 bg-white p-3">
+                <p class="text-xs text-sand-500 mb-2">整段音频（可拖动查找正确的切句位置）</p>
+                <audio id="validation-full-audio" :src="L.validationAudio" controls preload="metadata" @play="L.stopValidationPreview()" class="w-full"></audio>
+              </div>
+              <ol aria-label="暂时跳过的句子" class="space-y-3">
+                <li v-for="row in L.rowsToReview" :key="row.id" class="rounded-2xl border border-sand-200 bg-white p-4">
+                  <p class="text-xs font-semibold text-sand-500">第 {{ L.validation.check.report.rows.findIndex(s => s.id === row.id) + 1 }} 句</p>
+                  <p lang="en" class="text-lg leading-relaxed text-sand-900 mt-1 break-words">{{ row.en }}</p>
+                  <p v-for="reason in row.reasons" :key="reason" class="text-xs text-amber-700 mt-1">{{ reason }}</p>
+                  <p v-if="row.recognized" class="text-xs text-sand-500 mt-2 break-words">识别内容：{{ row.recognized }}</p>
+                  <div class="flex flex-wrap items-end gap-2 mt-3">
+                    <label class="text-xs text-sand-600">开始（秒）<input v-model.number="row.t0" type="number" min="0" :max="L.validation.check.report.duration" step="0.01" class="block mt-1 w-28 rounded-lg bg-white border border-sand-200 px-2 py-2 text-sm text-sand-900" /></label>
+                    <label class="text-xs text-sand-600">结束（秒）<input v-model.number="row.t1" type="number" min="0" :max="L.validation.check.report.duration" step="0.01" class="block mt-1 w-28 rounded-lg bg-white border border-sand-200 px-2 py-2 text-sm text-sand-900" /></label>
+                    <button @click="L.playValidationRow(row)" :disabled="L.validation.saving" class="rounded-xl px-3 py-2 bg-white border border-sand-200 text-sm text-sand-700 disabled:opacity-40">{{ L.validation.playingId === row.id ? '正在试听…' : '试听本句' }}</button>
+                    <button @click="L.confirmValidationRow(row)" :disabled="!L.validationCanConfirm(row)" class="btn-gradient rounded-xl px-3 py-2 text-sm font-semibold disabled:opacity-40">已听完，确认同步</button>
+                  </div>
+                </li>
+              </ol>
+            </details>
+          </template>
+        </div>
+        <footer class="flex flex-wrap justify-end gap-2 px-5 py-4 border-t border-sand-200">
+          <button v-if="L.validation.error && L.useSqlite" @click="L.refreshValidation()" class="rounded-xl px-4 py-2 text-sm bg-white border border-sand-200 text-sand-700">刷新结果</button>
+          <button v-if="L.useSqlite && L.validation.check && !['queued','running'].includes(L.validation.check.status)" @click="L.retryValidation()" :disabled="L.validation.saving" class="rounded-xl px-4 py-2 text-sm bg-white border border-sand-200 text-sand-700 disabled:opacity-40">{{ L.validation.check.status === 'unchecked' ? '开始自动修正' : '重新自动修正' }}</button>
+          <button v-if="L.validation.check?.status === 'passed'" @click="L.beginValidatedDictation()" class="btn-gradient rounded-xl px-5 py-2 text-sm font-semibold">开始听写</button>
+        </footer>
+      </section>
+    </div>
+  </transition>
+
   <!-- ╔══════════ 导入本地素材 ══════════╗ -->
   <transition name="popup">
-    <div v-if="L.importer.open" @click.self="L.importer.open = false" class="fixed inset-0 bg-sand-900/40 backdrop-blur-md flex items-center justify-center z-50 p-4">
-      <div class="glass-strong w-full max-w-lg rounded-3xl p-6 shadow-2xl animate-slide-up">
-        <h3 class="text-xl font-display font-bold text-sand-900 mb-1">导入自己的听力素材</h3>
-        <p class="text-xs text-sand-500 mb-5 leading-relaxed">音频 + 带时间轴的字幕（LRC / SRT / VTT，可中英双语）。文件只保存在本机浏览器（IndexedDB），不会上传。请只导入你有权使用的内容。</p>
-        <label class="block mb-3">
-          <span class="text-xs font-semibold text-sand-600">音频文件</span>
-          <input type="file" accept="audio/*,video/mp4" @change="e => L.pickAudio(e.target.files[0])" class="mt-1 block w-full text-sm text-sand-600 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-brand-50 file:text-brand-700" />
-        </label>
-        <label class="block mb-3">
-          <span class="text-xs font-semibold text-sand-600">字幕文件</span>
-          <input type="file" accept=".lrc,.srt,.vtt,text/plain" @change="e => (L.importer.sub = e.target.files[0] || null)" class="mt-1 block w-full text-sm text-sand-600 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-brand-50 file:text-brand-700" />
-        </label>
-        <label class="block mb-4">
-          <span class="text-xs font-semibold text-sand-600">标题</span>
-          <input v-model="L.importer.title" type="text" class="mt-1 w-full px-3 py-2 rounded-xl bg-white border border-sand-200 text-sm outline-none focus:border-brand-400" />
-        </label>
-        <p v-if="L.importer.error" class="text-xs text-rose-500 mb-3">{{ L.importer.error }}</p>
-        <div class="flex justify-end gap-2">
-          <button @click="L.importer.open = false" class="px-4 py-2 rounded-xl bg-sand-100 border border-sand-200 text-sm text-sand-700">取消</button>
-          <button @click="L.saveImport()" :disabled="L.importer.busy" class="btn-gradient px-5 py-2 rounded-xl text-sm font-semibold disabled:opacity-50">{{ L.importer.busy ? '导入中…' : '导入' }}</button>
+    <div v-if="L.importer.open" @click.self="!L.importer.busy && (L.importer.open = false)" class="fixed inset-0 bg-sand-900/40 backdrop-blur-md flex items-center justify-center z-50 p-4">
+      <div role="dialog" aria-modal="true" aria-labelledby="material-import-title" class="glass-strong w-full max-w-lg max-h-full overflow-y-auto rounded-3xl p-6 shadow-2xl animate-slide-up">
+        <h3 id="material-import-title" class="text-xl font-display font-bold text-sand-900 mb-3">{{ L.importer.report ? '文件夹导入结果' : L.importer.mode === 'folder' ? '导入文件夹' : '导入自己的听力素材' }}</h3>
+        <div v-show="!L.importer.report">
+          <p class="text-xs text-sand-500 mb-4 leading-relaxed">{{ L.importer.mode === 'folder' ? '按同一目录里的同名文件配对音频和带时间轴的字幕（LRC / SRT / VTT）。' : '请选择音频和带时间轴的字幕（LRC / SRT / VTT，可中英双语）。' }}{{ L.useSqlite ? '导入后会自动进行音文校验。' : '文件保存在当前浏览器。' }}请只导入你有权使用的内容。</p>
+          <fieldset :disabled="L.importer.busy" class="space-y-3">
+            <label v-if="L.importer.mode === 'folder'" class="block">
+              <span class="text-xs font-semibold text-sand-600">选择文件夹</span>
+              <input type="file" webkitdirectory @change="e => L.pickFolder(e.target.files)" class="mt-1 block w-full text-sm text-sand-600 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-brand-50 file:text-brand-700" />
+            </label>
+            <template v-else>
+              <label class="block">
+                <span class="text-xs font-semibold text-sand-600">音频文件</span>
+                <input type="file" accept="audio/*,video/mp4" @change="e => L.pickAudio(e.target.files[0])" class="mt-1 block w-full text-sm text-sand-600 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-brand-50 file:text-brand-700" />
+              </label>
+              <label class="block">
+                <span class="text-xs font-semibold text-sand-600">字幕文件</span>
+                <input type="file" accept=".lrc,.srt,.vtt,text/plain" @change="e => (L.importer.sub = e.target.files[0] || null)" class="mt-1 block w-full text-sm text-sand-600 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-brand-50 file:text-brand-700" />
+              </label>
+            </template>
+            <div>
+              <label for="import-textbook" class="text-xs font-semibold text-sand-600">教材</label>
+              <select id="import-textbook" v-model="L.importer.textbookChoice" class="mt-1 w-full px-3 py-2 rounded-xl bg-white border border-sand-200 text-sm text-sand-800 outline-none focus:border-brand-400">
+                <option value="">未分类</option>
+                <option v-for="name in L.textbookNames" :key="name" :value="name">{{ name }}</option>
+                <option :value="null">新建教材</option>
+              </select>
+            </div>
+            <label v-if="L.importer.textbookChoice === null" class="block">
+              <span class="text-xs font-semibold text-sand-600">新教材名称</span>
+              <input v-model="L.importer.newTextbook" type="text" class="mt-1 w-full px-3 py-2 rounded-xl bg-white border border-sand-200 text-sm outline-none focus:border-brand-400" />
+            </label>
+            <label v-if="L.importer.mode === 'single'" class="block">
+              <span class="text-xs font-semibold text-sand-600">标题</span>
+              <input v-model="L.importer.title" type="text" class="mt-1 w-full px-3 py-2 rounded-xl bg-white border border-sand-200 text-sm outline-none focus:border-brand-400" />
+            </label>
+          </fieldset>
+          <p v-if="L.importer.groups.length" role="status" class="mt-3 text-xs text-sand-600">{{ L.importer.busy ? `已处理 ${L.importer.processed} / ${L.importer.groups.length} 项` : `待处理 ${L.importer.groups.length} 项` }}</p>
+          <p v-if="L.importer.error" role="alert" class="mt-3 text-xs text-rose-500">{{ L.importer.error }}</p>
+          <div class="mt-4 flex justify-end gap-2">
+            <button @click="L.importer.open = false" :disabled="L.importer.busy" class="px-4 py-2 rounded-xl bg-sand-100 border border-sand-200 text-sm text-sand-700 disabled:opacity-50">取消</button>
+            <button @click="L.saveImport()" :disabled="L.importer.busy" class="btn-gradient px-5 py-2 rounded-xl text-sm font-semibold disabled:opacity-50">{{ L.importer.busy ? '导入中…' : '导入' }}</button>
+          </div>
         </div>
+        <template v-if="L.importer.report">
+          <p role="status" class="mb-3 text-sm text-sand-700">成功 {{ L.importer.report.added }} 篇 · 跳过 {{ L.importer.report.skipped }} 项 · 失败 {{ L.importer.report.failed }} 项</p>
+          <p v-if="L.useSqlite && L.importer.report.added" class="mb-3 text-xs text-sand-600">新导入的课文已加入音文校验队列。</p>
+          <ul aria-label="导入明细" class="max-h-[45vh] overflow-y-auto divide-y divide-sand-200 rounded-xl border border-sand-200 bg-white/60">
+            <li v-for="item in L.importer.report.items" :key="item.path" class="flex items-start justify-between gap-3 px-3 py-2 text-xs">
+              <div class="min-w-0 break-words">
+                <p class="font-semibold text-sand-900">{{ item.path }}</p>
+                <p v-if="item.reason" class="mt-1 text-sand-600">{{ item.reason }}</p>
+              </div>
+              <span class="shrink-0 font-semibold" :class="{ added: 'text-emerald-700', skipped: 'text-sand-600', failed: 'text-rose-600' }[item.status]">{{ { added: '成功', skipped: '跳过', failed: '失败' }[item.status] }}</span>
+            </li>
+          </ul>
+          <div class="mt-4 flex justify-end gap-2">
+            <button @click="L.importer.report = null" class="px-4 py-2 rounded-xl bg-sand-100 border border-sand-200 text-sm text-sand-700">返回导入</button>
+            <button @click="L.importer.open = false" class="btn-gradient px-5 py-2 rounded-xl text-sm font-semibold">完成</button>
+          </div>
+        </template>
       </div>
     </div>
   </transition>
@@ -1478,7 +1701,7 @@
             <button v-if="!srsShowAnswer" @click="srsShowAnswer = true" class="block mx-auto mt-4 px-6 py-2 rounded-xl bg-white border border-sand-200 text-sm font-semibold text-sand-700">显示答案</button>
             <div v-else class="mt-4 text-left space-y-2 animate-slide-up">
               <img v-if="vocabThumb(srsCurrent)" :src="vocabThumb(srsCurrent)" alt="" class="w-24 h-24 mx-auto rounded-2xl object-cover border border-sand-200" />
-              <p v-if="srsCurrent.translation" class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-sand-800 font-medium">{{ srsCurrent.translation }}</p>
+              <p v-if="srsCurrent.translation" class="hint-panel p-3 rounded-lg text-sm font-medium">{{ srsCurrent.translation }}</p>
               <p v-if="srsCurrent.context?.en" class="p-2 rounded-lg bg-white border border-sand-200 text-xs text-sand-600 leading-relaxed">{{ srsCurrent.context.en }}</p>
               <div v-for="(m, i) in (srsCurrent.meanings || []).slice(0, 2)" :key="i" class="p-2 rounded-lg bg-white border border-sand-200 text-sm">
                 <span class="text-[9px] font-bold text-brand-700 uppercase mr-1.5">{{ m.partOfSpeech }}</span><span class="text-sand-700">{{ m.definition }}</span>
@@ -1522,7 +1745,7 @@
           <div class="p-3 rounded-xl bg-white/70 border border-sand-200"><div class="text-xl font-bold text-sand-800">{{ L.dueCount }}</div><div class="text-[10px] text-sand-500 mt-0.5">待复习篇</div></div>
         </div>
         <p class="mt-3 text-center text-xs" :class="progressStats.todayCount > 0 ? 'text-emerald-600' : 'text-sand-500'">{{ progressStats.todayCount > 0 ? `✓ 今日已打卡 · ${progressStats.todayCount} 次学习` : '今日尚未学习，快去打卡吧' }}</p>
-        <p class="text-center text-[10px] text-sand-400 mt-1">数据保存在本设备浏览器中</p>
+        <p class="text-center text-[10px] text-sand-400 mt-1">{{ L.useSqlite ? '学习数据保存在本机 SQLite 数据库' : '学习数据保存在当前浏览器' }}</p>
         <div class="mt-5 border-t border-sand-200 pt-4">
           <div class="flex items-center justify-between mb-3">
             <h4 class="text-sm font-bold text-sand-800">🏅 我的成就</h4>
@@ -1558,8 +1781,8 @@
   @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 </style>
 
-<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-<script type="module" src="app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+<script type="module" src="app.js?v=20261120-textbooks"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => { navigator.serviceWorker.register('service-worker.js').catch(() => {}); });

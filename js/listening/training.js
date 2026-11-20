@@ -7,7 +7,7 @@ const H = 3600e3;
 export const STAGES = [
   { key: 'blind', name: '盲听', icon: '🎧', tip: '不看文稿，从头到尾听一遍，先抓大意和关键词。' },
   { key: 'intensive', name: '精听', icon: '🔍', tip: '逐句听，听不懂就循环、降速、看文稿，把卡住的句子标为难句。' },
-  { key: 'dictation', name: '听写', icon: '✍️', tip: '把难句（没有难句时就选几句）逐句默写，对比找出没听出的弱读与连读。' },
+  { key: 'dictation', name: '听写', icon: '✍️', tip: '逐句默写并对照原文，低于 80 分的句子会自动加入难句本。' },
   { key: 'shadow', name: '跟读', icon: '🗣️', tip: '逐句模仿语调、重音和停顿，录音后和原声对比。' },
   { key: 'retell', name: '复述', icon: '💬', tip: '只看关键词，用自己的话把内容说出来，录下来再对照原文。' },
 ];

@@ -1,7 +1,9 @@
-// 通用工具：本地存储、日期、文本处理
+// 通用工具：存储、日期、文本处理
+import { readValue, writeValue } from './storage.js';
+
 export function loadJSON(key, fallback) {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = readValue(key);
     return raw ? JSON.parse(raw) : fallback;
   } catch {
     return fallback;
@@ -10,9 +12,9 @@ export function loadJSON(key, fallback) {
 
 export function saveJSON(key, value) {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    writeValue(key, JSON.stringify(value));
   } catch (e) {
-    console.warn('localStorage 写入失败', key, e);
+    console.warn('状态写入失败', key, e);
   }
 }
 

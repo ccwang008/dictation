@@ -3,19 +3,23 @@
  * - 插画 / 字体 / CDN 脚本：cache-first
  * - 音频（mp3、Range 请求）：不拦截，交给浏览器 HTTP 缓存，避免破坏逐句 seek
  */
-const CACHE_NAME = 'listening-hub-v5';
+const CACHE_NAME = 'listening-hub-v15';
 const RUNTIME = 'listening-hub-runtime-v1';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './app.js',
+  './app.js?v=20261120-textbooks',
   './js/lib/utils.js',
-  './js/lib/segment-player.js',
+  './js/lib/storage.js',
+  './js/lib/materials.js',
+  './js/lib/material-import.js',
+  './js/lib/segment-player.js?v=20261120-auto-repair',
   './js/lib/subtitles.js',
   './js/lib/idb.js',
   './js/lib/atlas.js',
   './js/listening/training.js',
-  './js/listening/use-listening.js',
+  './js/listening/use-audio-validation.js?v=20261120-auto-repair',
+  './js/listening/use-listening.js?v=20261120-textbooks',
   './js/vocab/use-vocab-trainer.js',
   './data/listening/index.json',
   './data/vocab/manifest.json',
@@ -40,6 +44,7 @@ self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  if (url.origin === self.location.origin && url.href.startsWith(new URL('api/', self.registration.scope).href)) return;
 
   // 音频与外部 API 直通
   if (req.headers.has('range') || /\.(mp3|m4a|wav|ogg|webm)$/i.test(url.pathname)) return;
@@ -49,7 +54,7 @@ self.addEventListener('fetch', event => {
   const isCore = sameOrigin && (/\.(html|js|json)$/.test(url.pathname) || url.pathname.endsWith('/'));
   if (isCore) {
     event.respondWith(
-      fetch(req).then(res => {
+      fetch(req, { cache: 'no-cache' }).then(res => {
         if (res && res.status === 200) {
           const copy = res.clone();
           caches.open(CACHE_NAME).then(c => c.put(req, copy));
@@ -61,7 +66,7 @@ self.addEventListener('fetch', event => {
   }
 
   // 插画、字体、CDN：cache-first
-  if (/\.(webp|png|jpg|svg|woff2?)$/i.test(url.pathname) || /unpkg\.com|cdn\.tailwindcss\.com|fonts\.(googleapis|gstatic)\.com|raw\.githubusercontent\.com/.test(url.host)) {
+  if (/\.(webp|png|jpg|svg|woff2?)$/i.test(url.pathname) || /cdn\.jsdelivr\.net|cdn\.tailwindcss\.com|fonts\.(googleapis|gstatic)\.com|raw\.githubusercontent\.com/.test(url.host)) {
     event.respondWith(
       caches.match(req).then(hit => hit || fetch(req).then(res => {
         if (res && (res.status === 200 || res.type === 'opaque')) {

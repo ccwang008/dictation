@@ -1,8 +1,9 @@
 // Listening Hub 入口：主题 / 打卡进度 / 成就 / 生词本 + 查词 + SRS，组合听力与背单词模块
 import { loadJSON, saveJSON, todayStr, yesterdayStr, formatTime, tokenize, cleanWord, downloadText } from './js/lib/utils.js';
+import { readValue, writeValue } from './js/lib/storage.js';
 import { atlasRef, atlasEntryByIndex, loadAtlasMeta, mediaUrlSync, hasMedia, pronounce } from './js/lib/atlas.js';
 import { playClip, stopClip } from './js/lib/segment-player.js';
-import { useListening, resolveAudioRef } from './js/listening/use-listening.js';
+import { useListening, resolveAudioRef } from './js/listening/use-listening.js?v=20261120-textbooks';
 import { useVocabTrainer } from './js/vocab/use-vocab-trainer.js';
 
 const { createApp, ref, reactive, computed, onMounted, onUnmounted } = Vue;
@@ -23,13 +24,16 @@ function loadProgress() {
   };
 }
 
-// 免费翻译（MyMemory），仅用于没有内置译文的单词
+// 免费翻译（MyMemory），用于没有内置译文的单词和听写句子
 const translateCache = new Map();
 async function translateToChinese(text) {
   if (translateCache.has(text)) return translateCache.get(text);
   try {
-    const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|zh-CN`);
-    const zh = (await res.json())?.responseData?.translatedText || '';
+    const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|zh-CN`, { signal: AbortSignal.timeout(12000) });
+    if (!res.ok) return '';
+    const data = await res.json();
+    const zh = data?.responseData?.translatedText?.trim() || '';
+    if (Number(data.responseStatus) !== 200 || !zh) return '';
     translateCache.set(text, zh);
     return zh;
   } catch {
@@ -79,6 +83,7 @@ createApp({
     const statsModalOpen = ref(false);
     const vocabOpen = ref(false);
     const hardOpen = ref(false);
+    const favoritesDialog = ref(null);
 
     // ── Toast ──────────────────────────────────────────────────────────────────
     const toastState = reactive({ show: false, msg: '' });
@@ -91,11 +96,11 @@ createApp({
     }
 
     // ── Theme ─────────────────────────────────────────────────────────────────
-    const theme = ref(localStorage.getItem(THEME_KEY) || 'light');
+    const theme = ref(readValue(THEME_KEY) || 'light');
     function setTheme(t) {
       theme.value = t;
       document.documentElement.setAttribute('data-theme', t);
-      localStorage.setItem(THEME_KEY, t);
+      writeValue(THEME_KEY, t);
     }
     document.documentElement.setAttribute('data-theme', theme.value);
 
@@ -145,7 +150,7 @@ createApp({
 
     // ── 组合模块 ──────────────────────────────────────────────────────────────
     const L = useListening({
-      recordSentencePlayed, recordEpisodeCompleted, toast,
+      recordSentencePlayed, recordEpisodeCompleted, toast, translateToChinese,
       onEpisodeOpened: () => { sidebarOpen.value = false; },
     });
 
@@ -347,9 +352,21 @@ createApp({
     function enterApp() { view.value = 'app'; }
     function goHome() { L.stopAll(); view.value = 'home'; }
     function enterVocab() { L.stopAll(); view.value = 'vocab'; V.enterVocabTrainer(); }
+    function openFavorites() {
+      L.cancelDictHintShortcut();
+      L.favorites.removeError = '';
+      favoritesDialog.value.showModal();
+      L.loadFavorites();
+    }
 
     // ── 快捷键 ────────────────────────────────────────────────────────────────
-    function onKeyDown(e) {
+    function onKeyEvent(e) {
+      if (L.validation.open) {
+        if (e.key === 'Escape' && e.type === 'keydown') L.closeValidation();
+        return;
+      }
+      if (favoritesDialog.value?.open) return;
+      if (e.type === 'keyup' && e.key !== 'Shift') return;
       if (popup.visible) { if (e.key === 'Escape') closePopup(); return; }
       if (e.key === 'Escape') {
         if (vocabOpen.value) { vocabOpen.value = false; return; }
@@ -358,21 +375,28 @@ createApp({
         if (srsActive.value) { closeSRS(); return; }
       }
       if (srsActive.value || vocabOpen.value || statsModalOpen.value || L.importer.open) return;
-      if (view.value === 'vocab') { V.vtOnKey(e); return; }
+      if (view.value === 'vocab') { if (e.type === 'keydown') V.vtOnKey(e); return; }
       if (view.value === 'app') L.onKey(e);
     }
 
     onMounted(() => {
-      window.addEventListener('keydown', onKeyDown);
+      window.addEventListener('keydown', onKeyEvent);
+      window.addEventListener('keyup', onKeyEvent);
+      window.addEventListener('blur', L.cancelDictHintShortcut);
       L.loadCatalog();
       sidebarOpen.value = window.innerWidth >= 1024;
     });
-    onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
+    onUnmounted(() => {
+      L.closeValidation();
+      window.removeEventListener('keydown', onKeyEvent);
+      window.removeEventListener('keyup', onKeyEvent);
+      window.removeEventListener('blur', L.cancelDictHintShortcut);
+    });
 
     const exposed = {
       view, sidebarOpen, enterApp, goHome, enterVocab, formatTime, tokenize, cleanWord,
       theme, setTheme, progressStats, achievements, achievementUnlockedCount, statsModalOpen,
-      toastState, toast,
+      toastState, toast, favoritesDialog, openFavorites,
       // 生词本 / 查词 / SRS
       vocabOpen, vocabulary, vocabList, vocabCount, removeFromVocab, isWordSaved, playVocabAudio, vocabThumb, getEpTitle,
       popup, popupImg, openWordPopup, closePopup, playPopupAudio, addToVocab, playContext, atlasMeta,

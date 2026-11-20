@@ -1,5 +1,6 @@
 // 背单词模块：8 个词库（含 word-atlas 雅思·词光）、浏览 / 拼写 / 默写，与生词本 SRS 联动
 import { fetchJSON } from '../lib/utils.js';
+import { readValue, writeValue } from '../lib/storage.js';
 import { pronounce, loadAtlasMeta, mediaUrlSync, hasMedia, playUrl } from '../lib/atlas.js';
 
 const { ref, reactive, computed } = Vue;
@@ -11,18 +12,18 @@ export const VT_LIBS = {
 export function useVocabTrainer(ctx) {
   const vt = reactive({
     manifest: null,
-    library: VT_LIBS[localStorage.getItem('vt_library')] ? localStorage.getItem('vt_library') : 'ielts',
+    library: VT_LIBS[readValue('vt_library')] ? readValue('vt_library') : 'ielts',
     index: 1,
     word: null,
     loading: false,
     error: false,
-    showMeaning: localStorage.getItem('vt_show_meaning') !== 'false',
+    showMeaning: readValue('vt_show_meaning') !== 'false',
     jumpInput: '',
     searchInput: '',
     searchMsg: '',
     searchError: false,
     searching: false,
-    accent: localStorage.getItem('vt_accent') || 'us',
+    accent: readValue('vt_accent') || 'us',
     imgLarge: false,
   });
   const atlasMeta = ref(null);
@@ -79,7 +80,7 @@ export function useVocabTrainer(ctx) {
   function go(idx) {
     const next = Math.min(Math.max(idx, 1), total.value || 1);
     vt.index = next;
-    localStorage.setItem(`vt_index_${vt.library}`, String(next));
+    writeValue(`vt_index_${vt.library}`, String(next));
     loadWord();
   }
   const prev = () => { if (vt.index > 1) go(vt.index - 1); };
@@ -93,21 +94,21 @@ export function useVocabTrainer(ctx) {
   function setLibrary(lib) {
     if (!VT_LIBS[lib]) return;
     vt.library = lib;
-    localStorage.setItem('vt_library', lib);
-    vt.index = parseInt(localStorage.getItem(`vt_index_${lib}`) || '1', 10);
+    writeValue('vt_library', lib);
+    vt.index = parseInt(readValue(`vt_index_${lib}`) || '1', 10);
     vt.searchMsg = '';
     loadWord();
   }
 
   function toggleMeaning() {
     vt.showMeaning = !vt.showMeaning;
-    localStorage.setItem('vt_show_meaning', String(vt.showMeaning));
+    writeValue('vt_show_meaning', String(vt.showMeaning));
   }
 
   function speak(accent) {
     if (!vt.word) return;
     const a = accent || vt.accent;
-    if (accent) { vt.accent = accent; localStorage.setItem('vt_accent', accent); }
+    if (accent) { vt.accent = accent; writeValue('vt_accent', accent); }
     pronounce(vt.word.word, a);
   }
 
@@ -132,9 +133,9 @@ export function useVocabTrainer(ctx) {
         const pos = (await indexCache.get(lib)).indexOf(q);
         if (pos >= 0) {
           vt.library = lib;
-          localStorage.setItem('vt_library', lib);
+          writeValue('vt_library', lib);
           vt.index = pos + 1;
-          localStorage.setItem(`vt_index_${lib}`, String(pos + 1));
+          writeValue(`vt_index_${lib}`, String(pos + 1));
           await loadWord();
           vt.searchMsg = `已跳转到 ${q}（${VT_LIBS[lib]}词库）`;
           vt.searchError = false;
@@ -171,7 +172,7 @@ export function useVocabTrainer(ctx) {
   // ── 拼写 / 默写 ─────────────────────────────────────────────────────────────
   const spell = reactive({
     active: false, input: '', wrongChar: '', wrongTimes: 0, done: false,
-    hideWord: localStorage.getItem('vt_spell_hide') === 'true',
+    hideWord: readValue('vt_spell_hide') === 'true',
   });
   let wrongTimer = null;
 
@@ -182,7 +183,7 @@ export function useVocabTrainer(ctx) {
   }
   function toggleSpellHide() {
     spell.hideWord = !spell.hideWord;
-    localStorage.setItem('vt_spell_hide', String(spell.hideWord));
+    writeValue('vt_spell_hide', String(spell.hideWord));
     spellReset();
     if (spell.hideWord) speak();
   }
@@ -237,7 +238,7 @@ export function useVocabTrainer(ctx) {
   }
 
   function enter() {
-    vt.index = parseInt(localStorage.getItem(`vt_index_${vt.library}`) || '1', 10);
+    vt.index = parseInt(readValue(`vt_index_${vt.library}`) || '1', 10);
     if (!vt.word) loadWord();
   }
 

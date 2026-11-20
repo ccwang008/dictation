@@ -101,7 +101,7 @@ const ok = (name, cond, extra = '') => { results.push({ name, pass: !!cond, extr
   });
   ok('查词弹窗', popupInfo.word && popupInfo.ctx, JSON.stringify(popupInfo));
   await page.click('button:has-text("＋ 加入生词本")');
-  const vocab = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('voa_vocabulary') || '{}')));
+  const vocab = await page.evaluate(() => Object.values(window.__LH__.vocabulary));
   ok('收藏生词（含原句时间戳）', vocab.length === 1 && vocab[0].context && vocab[0].context.t1 > vocab[0].context.t0, JSON.stringify(vocab[0]?.context));
 
   // 听写阶段

@@ -1,13 +1,20 @@
 // 听力模块：素材目录 / 真人音频分段播放 / 训练流程 / 听写 / 跟读 / 复述 / 本地导入
-import { SegmentPlayer } from '../lib/segment-player.js';
-import { parseSubtitles } from '../lib/subtitles.js';
-import { materialsDB, requestPersist } from '../lib/idb.js';
+import { SegmentPlayer } from '../lib/segment-player.js?v=20261120-auto-repair';
+import { compareLessonNames, fileTitle, normalizeTextbook, prepareMaterial, scanMaterialFolder, unclassified } from '../lib/material-import.js';
+import { materials as materialStore } from '../lib/materials.js';
+import { requestAPI, useSqlite } from '../lib/storage.js';
 import { fetchJSON, loadJSON, saveJSON, diffWords, formatRelative } from '../lib/utils.js';
 import * as T from './training.js';
+import { useAudioValidation } from './use-audio-validation.js?v=20261120-auto-repair';
 
 const { ref, reactive, computed, watch, nextTick, shallowRef } = Vue;
 const PREF_KEY = 'lh_listen_prefs';
 const epCache = new Map();
+const favoritesPath = 'dictation/favorites';
+const favoritePath = (episodeId, sentenceId) => `${favoritesPath}/${encodeURIComponent(episodeId)}/${sentenceId}`;
+const favoriteDate = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' });
+const favoritesUnavailable = '请启动 ListeningHub 本地服务后使用句子收藏。';
+const favoriteErrorMessage = error => error instanceof TypeError ? favoritesUnavailable : error.message;
 
 export function useListening(ctx) {
   const prefs = loadJSON(PREF_KEY, {});
@@ -18,12 +25,14 @@ export function useListening(ctx) {
   // ── 目录 ────────────────────────────────────────────────────────────────────
   const catalog = ref([]);          // VOA 精选
   const materials = ref([]);        // 用户导入
+  const materialsError = ref('');
   const catalogSource = ref('');
   const catalogError = ref('');
   const tab = ref('voa');           // voa | review | mine
   const search = ref('');
   const category = ref('all');
   const level = ref('all');
+  const openTextbooks = reactive(new Set());
   const trainVersion = ref(0);      // 训练状态变化时递增，驱动重新计算
   const bump = () => { trainVersion.value++; };
 
@@ -39,13 +48,15 @@ export function useListening(ctx) {
   }
 
   async function loadMaterials() {
+    materialsError.value = '';
     try {
-      const list = await materialsDB.list();
+      const list = await materialStore.list();
       materials.value = list.sort((a, b) => b.createdAt - a.createdAt).map(m => ({
         id: m.id, title: m.title, titleZh: '', program: '我的素材', category: 'Mine', level: '',
-        duration: m.duration, wpm: m.wpm || 0, sentenceCount: m.sentences.length, kind: 'local', date: '',
+        textbook: normalizeTextbook(m.textbook),
+        duration: m.duration, wpm: m.wpm || 0, sentenceCount: m.sentences.length, kind: 'local', date: '', validation: m.validation,
       }));
-    } catch { materials.value = []; }
+    } catch (error) { materialsError.value = error.message || '无法读取我的素材'; }
   }
 
   const categories = computed(() => {
@@ -67,9 +78,33 @@ export function useListening(ctx) {
       if (level.value !== 'all') list = list.filter(e => e.level === level.value);
     }
     const q = search.value.trim().toLowerCase();
-    if (q) list = list.filter(e => `${e.title} ${e.titleZh || ''} ${e.program}`.toLowerCase().includes(q));
+    if (q) list = list.filter(e => {
+      const collection = tab.value === 'mine' ? e.textbook || unclassified : e.program;
+      return `${e.title} ${e.titleZh || ''} ${collection}`.toLowerCase().includes(q);
+    });
     return list;
   });
+
+  const textbookNames = computed(() => [...new Set(materials.value.map(m => m.textbook).filter(Boolean))].sort(compareLessonNames));
+  const materialSections = computed(() => {
+    if (tab.value !== 'mine') return [{ key: tab.value, episodes: filtered.value }];
+    const groups = new Map();
+    for (const episode of filtered.value) {
+      if (!groups.has(episode.textbook)) groups.set(episode.textbook, []);
+      groups.get(episode.textbook).push(episode);
+    }
+    const searching = Boolean(search.value.trim());
+    const names = [...textbookNames.value, ''];
+    return names.filter(name => groups.has(name)).map(name => ({
+      key: name, title: name || unclassified, expanded: searching || openTextbooks.has(name),
+      episodes: groups.get(name).sort((a, b) => compareLessonNames(a.title, b.title)),
+    }));
+  });
+  function toggleTextbook(name) {
+    if (search.value.trim()) return;
+    if (openTextbooks.has(name)) openTextbooks.delete(name);
+    else openTextbooks.add(name);
+  }
 
   const dueCount = computed(() => { trainVersion.value; return T.dueIds().length; });
   const learnedCount = computed(() => {
@@ -116,6 +151,25 @@ export function useListening(ctx) {
   const inReview = computed(() => !!(train.value?.learnedAt && train.value.nextReviewAt && train.value.nextReviewAt <= Date.now()));
   const stageKey = ref('intensive');  // 当前展示的训练阶段
 
+  const validationUI = useAudioValidation({ current, player, async onApproved(id) {
+    const metadata = await materialStore.get(id);
+    if (current.value?.id === id) {
+      const audio = await materialStore.audioURL(id, metadata.validation.revision);
+      resetDictation();
+      current.value = { ...current.value, ...metadata, audio };
+      player.load(audio);
+    }
+    await loadMaterials();
+  } });
+  watch(validationUI.validationReady, ready => { if (!ready) resetDictation(); });
+  async function beginValidatedDictation() {
+    if (validationUI.validation.check?.status !== 'passed') return;
+    const id = validationUI.validation.id;
+    validationUI.closeValidation();
+    await openEpisode({ id, kind: 'local' });
+    setStage('dictation');
+  }
+
   function findIdx(t) {
     const list = sentences.value;
     let lo = 0;
@@ -145,12 +199,12 @@ export function useListening(ctx) {
 
   async function resolveEpisode(meta) {
     if (meta.kind === 'local') {
-      const m = await materialsDB.get(meta.id);
-      const blob = await materialsDB.getAudio(meta.id);
-      if (!m || !blob) throw new Error('本地素材不存在');
+      const m = await materialStore.get(meta.id);
+      const audio = await materialStore.audioURL(meta.id, m?.validation?.status === 'passed' ? m.validation.revision : '');
+      if (!m || !audio) throw new Error('本地素材不存在');
       if (objectUrl) URL.revokeObjectURL(objectUrl);
-      objectUrl = URL.createObjectURL(blob);
-      return { ...meta, ...m, audio: objectUrl, audioRef: `idb:${meta.id}`, glossary: [], credits: [] };
+      objectUrl = audio.startsWith('blob:') ? audio : '';
+      return { ...meta, ...m, audio, audioRef: `idb:${meta.id}`, glossary: [], credits: [] };
     }
     if (!epCache.has(meta.id)) epCache.set(meta.id, fetchJSON(`data/listening/episodes/${meta.id}.json`));
     const ep = await epCache.get(meta.id);
@@ -160,7 +214,7 @@ export function useListening(ctx) {
   async function openEpisode(meta) {
     if (current.value?.id === meta.id) return;
     player.stop();
-    closeDictation();
+    resetDictation();
     closeShadow();
     resetRetell();
     loading.value = true;
@@ -169,16 +223,21 @@ export function useListening(ctx) {
     try {
       const ep = await resolveEpisode(meta);
       current.value = ep;
+      dictationAnswers.value = loadJSON(dictationKey(ep.id), {});
       duration.value = ep.duration || 0;
       time.value = 0;
       mode.value = 'idle';
       revealText.value = false;
       player.load(ep.audio);
       const st = T.getState(ep.id);
+      dictationMode.value = preferredDictationMode.value;
       const last = st.lastSentence ? ep.sentences.findIndex(s => s.id === st.lastSentence) : -1;
       activeIdx.value = last;
       if (st.learnedAt && st.nextReviewAt && st.nextReviewAt <= Date.now()) stageKey.value = 'blind';
-      else stageKey.value = T.STAGES[Math.min(st.stage, T.STAGES.length - 1)].key;
+      else if (dictationAnswers.value.resume?.active) {
+        stageKey.value = 'dictation';
+        startDictation(dictationMode.value, false);
+      } else stageKey.value = T.STAGES[Math.min(st.stage, T.STAGES.length - 1)].key;
       if (window.innerWidth < 1024) ctx.onEpisodeOpened && ctx.onEpisodeOpened();
     } catch (e) {
       loadError.value = String(e.message || e);
@@ -189,6 +248,9 @@ export function useListening(ctx) {
 
   function closeEpisode() {
     player.stop();
+    resetDictation();
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = '';
     current.value = null;
   }
 
@@ -215,12 +277,20 @@ export function useListening(ctx) {
   }
 
   function playAll() {
+    if (dictation.value.active) return selectDictQuestion(0);
     pauseEach.value = false;
     return playContinuous(0);
   }
 
   function togglePlay() {
     if (!current.value) return;
+    if (dictation.value.active) {
+      focusDictInput();
+      if (playing.value) return player.pause();
+      const s = dictSentence.value;
+      if (mode.value === 'range' && player.range?.t0 === s?.t0 && player.range?.t1 === s?.t1) return player.resume();
+      return dictPlay();
+    }
     if (playing.value) return player.pause();
     if (mode.value === 'range' && player.range) return player.resume();
     if (mode.value === 'continuous') {
@@ -234,6 +304,7 @@ export function useListening(ctx) {
   }
 
   function step(delta) {
+    if (dictation.value.active) return dictMove(delta);
     if (!sentences.value.length) return;
     const idx = Math.max(0, Math.min(sentences.value.length - 1, (activeIdx.value < 0 ? -1 : activeIdx.value) + delta));
     if (mode.value === 'continuous') return playContinuous(idx);
@@ -241,13 +312,24 @@ export function useListening(ctx) {
   }
 
   function replay() {
+    if (dictation.value.active) return dictPlay();
     if (activeSentence.value) playSentence(activeSentence.value);
   }
 
   function seekRatio(e) {
     if (!duration.value) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const t = ((e.clientX - rect.left) / rect.width) * duration.value;
+    const t = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * duration.value;
+    if (dictation.value.active) {
+      const queue = dictation.value.queue;
+      let pos = 0;
+      for (let i = 0; i < queue.length; i++) {
+        const sentence = sentences.value.find(s => s.id === queue[i]);
+        if (sentence.t0 <= t) pos = i;
+        else break;
+      }
+      return selectDictQuestion(pos);
+    }
     mode.value = 'continuous';
     pausedAtIdx = -1;
     if (playing.value) player.playFrom(t); else { player.seek(t); time.value = t; activeIdx.value = findIdx(t); }
@@ -272,27 +354,37 @@ export function useListening(ctx) {
 
   // ── 训练阶段 ────────────────────────────────────────────────────────────────
   function setStage(key) {
+    const previous = stageKey.value;
+    if (previous === 'dictation' && key !== previous) {
+      saveDictationResume(false);
+      resetDictation();
+    }
     stageKey.value = key;
     revealText.value = false;
-    if (key === 'dictation') startDictation();
+    if (key === 'dictation') startDictation(previous === key ? dictationMode.value : preferredDictationMode.value);
     if (key === 'retell') resetRetell();
   }
 
   function completeStage() {
     if (!current.value) return;
+    if (stageKey.value === 'dictation' && !validationUI.validationReady.value) return validationUI.openValidation(current.value);
     const id = current.value.id;
     const before = T.getState(id);
     const idx = T.STAGES.findIndex(s => s.key === stageKey.value);
     if (idx >= before.stage) T.setStage(id, idx);
     const st = T.completeStage(id);
     if (stageKey.value === 'blind') ctx.recordEpisodeCompleted(id);
+    if (stageKey.value === 'dictation') {
+      saveDictationResume(false);
+      resetDictation();
+    }
     bump();
     if (st.stage >= T.STAGES.length) {
       ctx.toast(before.learnedAt ? '本阶段完成' : `首学完成！${formatRelative(st.nextReviewAt)}进行第 1 轮复习`);
       stageKey.value = 'retell';
     } else {
       stageKey.value = T.STAGES[st.stage].key;
-      if (stageKey.value === 'dictation') startDictation();
+      if (stageKey.value === 'dictation') startDictation(preferredDictationMode.value);
     }
   }
 
@@ -311,6 +403,9 @@ export function useListening(ctx) {
 
   function resetProgress() {
     if (!current.value) return;
+    resetDictation();
+    dictationAnswers.value = {};
+    saveJSON(dictationKey(current.value.id), {});
     T.resetEpisode(current.value.id);
     stageKey.value = 'blind';
     bump();
@@ -329,43 +424,281 @@ export function useListening(ctx) {
   });
 
   // ── 听写 ────────────────────────────────────────────────────────────────────
-  const dictation = reactive({ active: false, queue: [], pos: 0, input: '', result: null, scores: [] });
-  const dictSentence = computed(() => sentences.value.find(s => s.id === dictation.queue[dictation.pos]) || null);
-
-  function startDictation(ids) {
-    if (!current.value) return;
-    const hard = train.value?.hard || [];
-    let queue = ids || (hard.length ? hard : sentences.value.filter((_, i) => i % 3 === 0).slice(0, 8).map(s => s.id));
-    if (!queue.length) queue = sentences.value.slice(0, 5).map(s => s.id);
-    Object.assign(dictation, { active: true, queue: [...queue], pos: 0, input: '', result: null, scores: [] });
-    nextTick(() => dictPlay());
-  }
-  function dictPlay(r) {
-    const s = dictSentence.value;
-    if (!s) return;
-    if (r) player.setRate(r);
-    playSentence(s, { loop: false, onEnd: () => player.setRate(rate.value) });
-  }
-  function dictSubmit() {
-    const s = dictSentence.value;
-    if (!s || !dictation.input.trim()) return;
-    dictation.result = diffWords(s.en, dictation.input);
-    dictation.scores[dictation.pos] = dictation.result.score;
-    if (dictation.result.score < 80 && !hardSet.value.has(s.id)) toggleHard(s);
-  }
-  function dictNext() {
-    if (dictation.pos < dictation.queue.length - 1) {
-      dictation.pos++;
-      dictation.input = '';
-      dictation.result = null;
-      nextTick(() => dictPlay());
-    } else {
-      dictation.active = false;
-      const avg = Math.round(dictation.scores.reduce((a, b) => a + (b || 0), 0) / Math.max(1, dictation.scores.length));
-      ctx.toast(`听写完成，平均 ${avg} 分`);
+  const dictationMode = ref('all');
+  const dictationRounds = reactive({ all: { active: false }, hard: { active: false } });
+  const dictation = computed(() => dictationRounds[dictationMode.value]);
+  const dictationAnswers = ref({});
+  const dictHint = ref(false);
+  const dictationKey = id => `lh_dictation_${id}`;
+  const dictationSentences = computed(() => {
+    const excluded = new Set(current.value?.dictationExcluded || []);
+    return sentences.value.filter(s => !excluded.has(s.id));
+  });
+  const dictHardIds = computed(() => dictationSentences.value.filter(s => hardSet.value.has(s.id)).map(s => s.id));
+  const preferredDictationMode = computed(() => dictationAnswers.value.resume?.mode ?? (dictHardIds.value.length ? 'hard' : 'all'));
+  const dictSentence = computed(() => {
+    const round = dictation.value;
+    return round.active ? sentences.value.find(s => s.id === round.queue[round.pos]) : null;
+  });
+  const dictAnswer = computed(() => dictationAnswers.value[dictationMode.value]?.[dictSentence.value?.id]);
+  const dictInput = computed({
+    get: () => dictAnswer.value?.draft ?? dictAnswer.value?.input ?? '',
+    set(input) {
+      const answer = dictAnswer.value;
+      if (!answer) return;
+      answer.draft = input === answer.input ? undefined : input;
+      saveDictAnswer();
+    },
+  });
+  const dictResult = computed(() => {
+    const answer = dictAnswer.value;
+    return answer?.score != null && !answer.rewriting ? diffWords(dictSentence.value.en, answer.input) : null;
+  });
+  const dictHasErrors = computed(() => dictResult.value?.diff.some(word => !word.ok) ?? false);
+  const dictTranslations = reactive(loadJSON('lh_sentence_translations', {}));
+  const dictTranslationRequests = reactive({});
+  const dictTranslation = computed(() => dictSentence.value?.zh || dictTranslations[dictSentence.value?.en] || '');
+  const dictTranslationState = computed(() => dictTranslationRequests[dictSentence.value?.en] || '');
+  async function translateDictSentence() {
+    const en = dictSentence.value?.en;
+    if (!dictResult.value || !en || dictTranslation.value || dictTranslationRequests[en] === 'loading') return;
+    dictTranslationRequests[en] = 'loading';
+    try {
+      const zh = await ctx.translateToChinese(en);
+      if (!zh) throw new Error('Translation unavailable');
+      dictTranslations[en] = zh;
+      saveJSON('lh_sentence_translations', dictTranslations);
+      dictTranslationRequests[en] = '';
+    } catch {
+      dictTranslationRequests[en] = 'error';
     }
   }
-  function closeDictation() { dictation.active = false; }
+  watch(() => dictResult.value ? dictSentence.value?.en : null, en => {
+    if (en) translateDictSentence();
+  });
+  const dictCanSubmit = computed(() => {
+    const answer = dictAnswer.value;
+    return Boolean(dictInput.value.trim()) && (!dictResult.value || (dictHasErrors.value && answer.draft != null));
+  });
+  const dictAnswerUnfinished = answer => answer?.score == null || answer.rewriting;
+
+  function dictRowStatus(id) {
+    const answer = dictationAnswers.value[dictationMode.value]?.[id];
+    if (answer?.rewriting) return '重写中';
+    if (answer?.draft != null) return '有草稿';
+    return answer?.score != null ? '已批改' : '未作答';
+  }
+
+  function startDictation(selection = dictationMode.value, autoplay = true) {
+    if (!current.value) return;
+    if (!validationUI.validationReady.value) {
+      validationUI.openValidation(current.value);
+      return;
+    }
+    const switching = selection !== dictationMode.value;
+    if (dictation.value.active) {
+      if (!switching) return focusDictInput(true);
+      stopDictationAudio();
+    }
+    dictationMode.value = selection;
+    if (!dictation.value.active) {
+      const queue = selection === 'hard' ? [...dictHardIds.value] : dictationSentences.value.map(s => s.id);
+      if (!queue.length) return saveDictationResume(true);
+      const answers = dictationAnswers.value[selection];
+      const savedPosition = queue.indexOf(dictationAnswers.value.resume?.[selection]);
+      const firstUnanswered = queue.findIndex(id => dictAnswerUnfinished(answers?.[id]));
+      const pos = savedPosition >= 0 ? savedPosition : (firstUnanswered >= 0 ? firstUnanswered : queue.length - 1);
+      dictationRounds[selection] = { active: true, queue, pos, finished: false };
+    }
+    openDictQuestion(autoplay);
+  }
+  function saveDictationResume(active) {
+    const key = dictationKey(current.value.id);
+    const saved = loadJSON(key, {});
+    const resume = { ...saved.resume, active, mode: dictationMode.value };
+    const s = dictSentence.value;
+    if (s) resume[dictationMode.value] = s.id;
+    dictationAnswers.value.resume = resume;
+    saveJSON(key, { ...saved, resume });
+  }
+  function saveDictAnswer() {
+    const key = dictationKey(current.value.id);
+    const saved = loadJSON(key, {});
+    (saved[dictationMode.value] ??= {})[dictSentence.value.id] = dictAnswer.value;
+    saveJSON(key, saved);
+  }
+  function openDictQuestion(autoplay = true) {
+    const s = dictSentence.value;
+    const answers = dictationAnswers.value[dictationMode.value] ??= {};
+    answers[s.id] ??= { input: '', score: null };
+    dictHint.value = false;
+    saveDictationResume(true);
+    if (autoplay) dictPlay(rate.value, true);
+    else {
+      activeIdx.value = sentences.value.indexOf(s);
+      time.value = s.t0;
+      focusDictInput(true);
+    }
+  }
+  function focusDictInput(scroll = false) {
+    nextTick(() => {
+      const input = document.getElementById('dictation-input');
+      input?.focus({ preventScroll: true });
+      if (scroll) input?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
+  }
+  function dictPlay(r = rate.value, scroll = false) {
+    if (!validationUI.validationReady.value) return validationUI.openValidation(current.value);
+    const s = dictSentence.value;
+    if (!s) return;
+    player.pause();
+    player.setRate(r);
+    playSentence(s, { loop: false, onEnd: () => player.setRate(rate.value) });
+    focusDictInput(scroll);
+  }
+  function toggleDictHint() {
+    if (!dictSentence.value || dictResult.value) return;
+    dictHint.value = !dictHint.value;
+    focusDictInput();
+  }
+  function dictSubmit() {
+    const answer = dictAnswer.value;
+    const s = dictSentence.value;
+    if (!s || !dictCanSubmit.value) return;
+    answer.input = dictInput.value;
+    answer.score = diffWords(s.en, answer.input).score;
+    delete answer.draft;
+    delete answer.rewriting;
+    dictation.value.finished = false;
+    saveDictAnswer();
+    if (answer.score < 80 && !hardSet.value.has(s.id)) toggleHard(s);
+    focusDictInput(true);
+  }
+  function dictRewrite() {
+    dictAnswer.value.rewriting = true;
+    saveDictAnswer();
+    dictation.value.finished = false;
+    dictHint.value = false;
+    dictPlay();
+  }
+  function selectDictQuestion(pos) {
+    const round = dictation.value;
+    if (!round.active || pos < 0 || pos >= round.queue.length) return;
+    if (round.pos === pos) return dictPlay(rate.value, true);
+    round.pos = pos;
+    openDictQuestion();
+  }
+  function dictMove(delta) {
+    selectDictQuestion(dictation.value.pos + delta);
+  }
+  function dictNext() {
+    const round = dictation.value;
+    if (!round.active) return;
+    if (round.pos < round.queue.length - 1) return dictMove(1);
+    if (round.finished) return;
+    const answers = dictationAnswers.value[dictationMode.value];
+    const nextUnanswered = round.queue.findIndex(id => dictAnswerUnfinished(answers[id]));
+    if (nextUnanswered >= 0) return dictMove(nextUnanswered - round.pos);
+    const scores = round.queue.map(id => answers[id].score);
+    const avg = Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
+    round.finished = true;
+    stopDictationAudio();
+    focusDictInput();
+    ctx.toast(`听写完成，平均 ${avg} 分`);
+  }
+  function stopDictationAudio() {
+    player.stop();
+    player.setRate(rate.value);
+  }
+  function closeDictation() {
+    if (!dictation.value.active) return;
+    saveDictationResume(false);
+    dictationRounds[dictationMode.value] = { active: false };
+    stopDictationAudio();
+  }
+  function resetDictation() {
+    if (dictation.value.active) stopDictationAudio();
+    dictationRounds.all = { active: false };
+    dictationRounds.hard = { active: false };
+  }
+
+  // ── 听写收藏 ────────────────────────────────────────────────────────────────
+  const favorites = reactive({ items: [], pending: new Set(), loading: false, loadError: '', removeError: '' });
+  const favoriteActionError = ref(null);
+  const dictFavoritePath = computed(() => current.value && dictSentence.value
+    ? favoritePath(current.value.id, dictSentence.value.id)
+    : '');
+  const dictFavoriteSaved = computed(() => favorites.items.some(item =>
+    item.episodeId === current.value?.id && item.sentenceId === dictSentence.value?.id));
+  const dictFavoritePending = computed(() => favorites.pending.has(dictFavoritePath.value));
+  const dictFavoriteError = computed(() => favoriteActionError.value?.path === dictFavoritePath.value
+    ? favoriteActionError.value.message
+    : '');
+  let favoriteRevision = 0;
+
+  async function loadFavorites() {
+    if (!useSqlite || favorites.loading) return;
+    favorites.loading = true;
+    favorites.loadError = '';
+    try {
+      // A completed write may have made an in-flight list response stale.
+      let revision;
+      let result;
+      do {
+        revision = favoriteRevision;
+        result = await requestAPI(favoritesPath);
+      } while (revision !== favoriteRevision);
+      favorites.items = result.favorites;
+    } catch (error) {
+      favorites.loadError = favoriteErrorMessage(error);
+    } finally {
+      favorites.loading = false;
+    }
+  }
+
+  async function updateFavorite(path, method) {
+    favorites.pending.add(path);
+    try {
+      const item = await requestAPI(path, { method });
+      favoriteRevision++;
+      const items = favorites.items.filter(entry => favoritePath(entry.episodeId, entry.sentenceId) !== path);
+      if (method === 'PUT') {
+        items.unshift(item);
+        items.sort((a, b) => b.savedAt - a.savedAt);
+      }
+      favorites.items = items;
+    } finally {
+      favorites.pending.delete(path);
+    }
+  }
+
+  async function toggleDictFavorite() {
+    const path = dictFavoritePath.value;
+    if (!useSqlite || !path || favorites.pending.has(path)) return;
+    const saved = dictFavoriteSaved.value;
+    favoriteActionError.value = null;
+    try {
+      await updateFavorite(path, saved ? 'DELETE' : 'PUT');
+    } catch (error) {
+      const action = saved ? '取消收藏' : '收藏';
+      favoriteActionError.value = { path, message: `${action}失败。${favoriteErrorMessage(error)}` };
+    }
+  }
+
+  async function removeFavorite(item) {
+    const path = favoritePath(item.episodeId, item.sentenceId);
+    if (favorites.pending.has(path)) return;
+    favorites.removeError = '';
+    try {
+      await updateFavorite(path, 'DELETE');
+    } catch (error) {
+      favorites.removeError = favoriteErrorMessage(error);
+    }
+  }
+
+  watch([stageKey, current], ([stage, episode]) => {
+    if (stage === 'dictation' && episode) loadFavorites();
+  });
 
   // ── 跟读 ────────────────────────────────────────────────────────────────────
   const shadow = reactive({ active: false, sentenceId: null, recording: false, url: '', error: '', comparing: false });
@@ -469,7 +802,7 @@ export function useListening(ctx) {
       const meta = all.find(e => e.id === epId);
       if (!meta) continue;
       try {
-        const ep = meta.kind === 'local' ? await materialsDB.get(epId) : await (epCache.get(epId) || (epCache.set(epId, fetchJSON(`data/listening/episodes/${epId}.json`)), epCache.get(epId)));
+        const ep = meta.kind === 'local' ? await materialStore.get(epId) : await (epCache.get(epId) || (epCache.set(epId, fetchJSON(`data/listening/episodes/${epId}.json`)), epCache.get(epId)));
         const s = ep?.sentences.find(x => x.id === sentenceId);
         if (s) out.push({ meta, sentence: s });
       } catch { /* 忽略 */ }
@@ -482,46 +815,97 @@ export function useListening(ctx) {
     stageKey.value = 'intensive';
     if (s) playSentence(s);
   }
-  watch(tab, v => { if (v === 'review') loadHardItems(); });
+  watch(tab, v => {
+    if (v === 'review') loadHardItems();
+    if (v === 'mine') loadMaterials();
+  });
 
   // ── 导入本地素材 ────────────────────────────────────────────────────────────
-  const importer = reactive({ open: false, audio: null, sub: null, title: '', error: '', busy: false });
-  function openImporter() { Object.assign(importer, { open: true, audio: null, sub: null, title: '', error: '', busy: false }); }
-  function pickAudio(file) {
-    importer.audio = file || null;
-    if (file && !importer.title) importer.title = file.name.replace(/\.[^.]+$/, '');
-  }
-  function audioDuration(file) {
-    return new Promise(resolve => {
-      const a = new Audio();
-      const url = URL.createObjectURL(file);
-      a.preload = 'metadata';
-      a.onloadedmetadata = () => { resolve(a.duration || 0); URL.revokeObjectURL(url); };
-      a.onerror = () => { resolve(0); URL.revokeObjectURL(url); };
-      a.src = url;
+  const importer = reactive({
+    open: false, mode: 'single', audio: null, sub: null, title: '', textbookChoice: '', newTextbook: '',
+    groups: [], report: null, processed: 0, error: '', busy: false,
+  });
+  function openImporter(mode = 'single') {
+    Object.assign(importer, {
+      open: true, mode, audio: null, sub: null, title: '', textbookChoice: '', newTextbook: '',
+      groups: [], report: null, processed: 0, error: '', busy: false,
     });
   }
+  function pickAudio(file) {
+    const previousTitle = importer.audio ? fileTitle(importer.audio.name) : '';
+    importer.audio = file || null;
+    if (!importer.title || importer.title === previousTitle) importer.title = file ? fileTitle(file.name) : '';
+  }
+  function pickFolder(files) {
+    const { name, groups } = scanMaterialFolder(files);
+    importer.groups = groups;
+    importer.report = null;
+    importer.error = groups.length ? '' : '文件夹里没有支持的音频或字幕文件';
+    const textbook = normalizeTextbook(name);
+    importer.textbookChoice = !textbook || textbookNames.value.includes(textbook) ? textbook : null;
+    importer.newTextbook = importer.textbookChoice === null ? textbook : '';
+  }
+  async function importFolder(textbook) {
+    const knownTitles = new Set((await materialStore.list())
+      .filter(item => normalizeTextbook(item.textbook) === textbook).map(item => item.title.trim()));
+    const report = { added: 0, skipped: 0, failed: 0, items: [] };
+    function record(group, status, reason = '') {
+      report[status]++;
+      report.items.push({ path: group.path, status, reason });
+      importer.processed++;
+    }
+    for (const group of importer.groups) {
+      const [audio] = group.audio;
+      const [subtitle] = group.subtitle;
+      if (group.audio.length > 1 || group.subtitle.length > 1) {
+        record(group, 'skipped', '有多个同名音频或字幕，无法确定配对');
+        continue;
+      }
+      if (!audio || !subtitle) {
+        record(group, 'skipped', audio ? `${audio.name} 缺少同名字幕` : `${subtitle.name} 缺少同名音频`);
+        continue;
+      }
+      const title = fileTitle(audio.name).trim();
+      if (knownTitles.has(title)) {
+        record(group, 'skipped', '该教材下已有同名课文');
+        continue;
+      }
+      try {
+        const metadata = await prepareMaterial(audio, subtitle, { title, textbook });
+        await materialStore.put(metadata, audio, subtitle);
+        knownTitles.add(metadata.title);
+        record(group, 'added');
+      } catch (error) {
+        record(group, 'failed', error.message || '保存失败');
+      }
+    }
+    importer.report = report;
+    await loadMaterials();
+  }
   async function saveImport() {
-    if (!importer.audio || !importer.sub) { importer.error = '请同时选择音频和字幕文件'; return; }
+    if (importer.busy) return;
+    const textbook = normalizeTextbook(importer.textbookChoice ?? importer.newTextbook);
+    if (importer.textbookChoice === null && !textbook) { importer.error = '请输入教材名称，或选择未分类'; return; }
+    const folder = importer.mode === 'folder';
+    if (folder && !importer.groups.length) { importer.error = '请选择包含音频和字幕的文件夹'; return; }
+    if (!folder && (!importer.audio || !importer.sub)) { importer.error = '请同时选择音频和字幕文件'; return; }
     importer.busy = true;
     importer.error = '';
+    importer.processed = 0;
     try {
-      const dur = await audioDuration(importer.audio);
-      const text = await importer.sub.text();
-      const sents = parseSubtitles(text, importer.sub.name, dur);
-      if (sents.length < 2) throw new Error('字幕里没有解析到带时间轴的句子，请确认是 LRC / SRT / VTT 格式');
-      const words = sents.reduce((n, s) => n + s.en.split(/\s+/).length, 0);
-      const speech = sents.reduce((n, s) => n + (s.t1 - s.t0), 0) || 1;
-      const id = `local-${Date.now().toString(36)}`;
-      await materialsDB.put({
-        id, title: importer.title || importer.audio.name, createdAt: Date.now(), duration: dur,
-        wpm: Math.round((words / speech) * 60), sentences: sents, audioName: importer.audio.name,
-      }, importer.audio);
-      requestPersist();
+      if (folder) {
+        if (navigator.locks) await navigator.locks.request('listeninghub-folder-import', () => importFolder(textbook));
+        else await importFolder(textbook);
+        return;
+      }
+      const { audio, sub, title } = importer;
+      const metadata = await prepareMaterial(audio, sub, { title, textbook });
+      await materialStore.put(metadata, audio, sub);
       await loadMaterials();
       importer.open = false;
       tab.value = 'mine';
-      ctx.toast(`已导入 ${sents.length} 句`);
+      ctx.toast(`已导入 ${metadata.sentences.length} 句${useSqlite ? '，正在自动修正声音与字幕' : ''}`);
+      await validationUI.openValidation(metadata);
     } catch (e) {
       importer.error = String(e.message || e);
     } finally {
@@ -530,19 +914,52 @@ export function useListening(ctx) {
   }
   async function removeMaterial(meta) {
     if (!confirm(`删除「${meta.title}」？音频和字幕会从本机移除。`)) return;
-    if (current.value?.id === meta.id) closeEpisode();
-    await materialsDB.remove(meta.id);
-    T.resetEpisode(meta.id);
-    bump();
-    await loadMaterials();
+    try {
+      await materialStore.remove(meta.id);
+      if (current.value?.id === meta.id) closeEpisode();
+      saveJSON(dictationKey(meta.id), {});
+      T.resetEpisode(meta.id);
+      bump();
+      await loadMaterials();
+    } catch (error) {
+      ctx.toast(error.message || '无法删除素材');
+    }
   }
 
   // ── 快捷键 ──────────────────────────────────────────────────────────────────
+  let dictHintShiftTarget = null;
+  function cancelDictHintShortcut() {
+    dictHintShiftTarget = null;
+  }
   function onKey(e) {
+    const shiftTarget = dictHintShiftTarget;
+    cancelDictHintShortcut();
     if (!current.value) return false;
-    if (dictation.active) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); dictation.result ? dictNext() : dictSubmit(); return true; }
-      if (e.key === 'Tab') { e.preventDefault(); dictPlay(); return true; }
+    if (dictation.value.active) {
+      if (e.isComposing) return false;
+      if (e.key === 'Shift' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (e.type === 'keyup') {
+          if (shiftTarget === e.target) toggleDictHint();
+        } else if (!e.repeat) {
+          dictHintShiftTarget = e.target;
+        }
+        return true;
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !e.target.closest('button')) {
+        e.preventDefault();
+        if (e.repeat) return true;
+        if (dictCanSubmit.value) {
+          dictSubmit();
+        } else if (dictResult.value && dictAnswer.value.draft == null) {
+          dictNext();
+        }
+        return true;
+      }
+      if (e.key === 'Tab' && !e.shiftKey && e.target.tagName === 'TEXTAREA') {
+        e.preventDefault();
+        dictPlay();
+        return true;
+      }
       return false;
     }
     if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return false;
@@ -566,9 +983,10 @@ export function useListening(ctx) {
   function stopAll() { player.pause(); }
 
   return {
+    ...validationUI, beginValidatedDictation,
     // 目录
-    catalog, materials, catalogSource, catalogError, tab, search, category, level, categories, filtered,
-    statusOf, dueCount, learnedCount, loadCatalog, trainVersion,
+    catalog, materials, materialsError, useSqlite, catalogSource, catalogError, tab, search, category, level, categories, filtered,
+    materialSections, textbookNames, toggleTextbook, statusOf, dueCount, learnedCount, loadCatalog, trainVersion,
     // 播放
     current, loading, loadError, audioError, playing, time, duration, activeIdx, activeSentence, sentences, mode,
     rate, loop, pauseEach, showZh, revealText, openEpisode, closeEpisode, playSentence, playContinuous, playAll,
@@ -577,20 +995,25 @@ export function useListening(ctx) {
     STAGES: T.STAGES, REVIEW_HOURS: T.REVIEW_HOURS, stageKey, setStage, completeStage, finishReview, train, hardSet,
     inReview, toggleHard, resetProgress, keywords,
     // 听写 / 跟读 / 复述
-    dictation, dictSentence, startDictation, dictPlay, dictSubmit, dictNext, closeDictation,
+    dictationMode, dictation, dictationSentences, dictHardIds, dictSentence, dictAnswer, dictInput, dictResult, dictHasErrors, dictCanSubmit, dictHint,
+    dictTranslation, dictTranslationState, translateDictSentence,
+    startDictation, dictRowStatus, selectDictQuestion, dictPlay, toggleDictHint, dictSubmit, dictRewrite, dictMove, dictNext, closeDictation,
+    favorites, favoritesUnavailable, loadFavorites, toggleDictFavorite, removeFavorite,
+    dictFavoriteSaved, dictFavoritePending, dictFavoriteError,
+    favoritePending: item => favorites.pending.has(favoritePath(item.episodeId, item.sentenceId)),
+    formatFavoriteDate: time => favoriteDate.format(time),
     shadow, shadowSentence, openShadow, shadowNav, shadowRecord, shadowPlayMine, shadowCompare, closeShadow,
     retell, retellRecord, retellPlay, resetRetell,
     // 难句 / 导入
     hardItems, loadHardItems, playHardItem,
-    importer, openImporter, pickAudio, saveImport, removeMaterial,
-    onKey, wordContext, formatRelative,
+    importer, openImporter, pickAudio, pickFolder, saveImport, removeMaterial,
+    onKey, cancelDictHintShortcut, wordContext, formatRelative,
   };
 }
 
-// 生词本里回放原句：VOA 素材直接用路径；本地素材从 IndexedDB 取音频
+// 保持已保存的本地素材引用格式，实际音频由当前存储后端提供。
 export async function resolveAudioRef(ref) {
   if (!ref) return '';
   if (!ref.startsWith('idb:')) return ref;
-  const blob = await materialsDB.getAudio(ref.slice(4));
-  return blob ? URL.createObjectURL(blob) : '';
+  return materialStore.audioURL(ref.slice(4));
 }

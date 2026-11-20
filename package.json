@@ -1,15 +1,21 @@
 {
   "name": "listening-hub",
   "private": true,
-  "description": "真人原声英语听力训练 + 词光雅思背单词（纯静态站点，无构建步骤）",
+  "description": "真人原声英语听力训练 + 词光雅思背单词，本地服务使用 SQLite",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
-    "serve": "http-server -p 8080 -c-1 .",
-    "test": "node tests/e2e-listening.js && node tests/e2e-import.js",
-    "screenshots": "node tests/screenshots.js"
+    "serve": "node server/index.cjs",
+    "test": "python3 tests/test_audio_validation.py && node --test tests/segment-player.cjs tests/dictation-favorites.cjs tests/material-validation.cjs && node tests/run-local.cjs e2e-listening.js e2e-import.js e2e-validation.js e2e-textbooks.js",
+    "screenshots": "node tests/run-local.cjs screenshots.js",
+    "setup:audio-check": "python3 scripts/audio/setup.py"
+  },
+  "dependencies": {
+    "http-server": "^14.1.1"
   },
   "devDependencies": {
-    "http-server": "^14.1.1",
     "playwright-core": "^1.50.0"
   }
 }

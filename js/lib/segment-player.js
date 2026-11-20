@@ -46,7 +46,7 @@ export class SegmentPlayer {
     const el = this.el;
     return new Promise(resolve => {
       const target = Math.max(0, t);
-      if (Math.abs(el.currentTime - target) < 0.02) return resolve();
+      if (!el.seeking && Math.abs(el.currentTime - target) < 0.02) return resolve();
       const done = () => { el.removeEventListener('seeked', done); clearTimeout(timer); resolve(); };
       const timer = setTimeout(done, 1500);
       el.addEventListener('seeked', done);
@@ -66,10 +66,11 @@ export class SegmentPlayer {
 
   // 播放 [t0, t1) 片段；loop=true 时片段结束后间隔 gap 秒重播
   async playRange(t0, t1, { loop = false, gap = 0.6, onEnd } = {}) {
-    const token = ++this._token;
-    clearTimeout(this._loopTimer);
+    this.pause();
+    const token = this._token;
     this.range = { t0, t1, loop, gap, onEnd };
     await this._waitReady();
+    if (token !== this._token) return;
     await this._seek(t0);
     if (token !== this._token) return;
     try { await this.el.play(); } catch (e) { this._emit('error', e); }
@@ -77,10 +78,11 @@ export class SegmentPlayer {
 
   // 从 t 开始连续播放
   async playFrom(t) {
-    const token = ++this._token;
-    clearTimeout(this._loopTimer);
+    this.pause();
+    const token = this._token;
     this.range = null;
     await this._waitReady();
+    if (token !== this._token) return;
     if (t != null) await this._seek(t);
     if (token !== this._token) return;
     try { await this.el.play(); } catch (e) { this._emit('error', e); }
